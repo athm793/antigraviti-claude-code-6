@@ -59,7 +59,7 @@ export async function POST(
 
   // Actually make the request
   let responseStatus: number;
-  let responseHeaders: Record<string, string> = {};
+  const responseHeaders: Record<string, string> = {};
   let responseBody: string;
 
   try {

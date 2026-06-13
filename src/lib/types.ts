@@ -56,3 +56,20 @@ export interface InsertKeysResult {
   inserted: number;
   skipped: number;
 }
+
+export interface AuditLogEntry {
+  id: number;
+  config_id: string;
+  action: string;
+  detail: string | null;
+  created_at: string;
+}
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  is_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}

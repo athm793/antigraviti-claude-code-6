@@ -3,23 +3,39 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ConfigWithStats } from "@/lib/types";
+import { ConfirmModal } from "./ConfirmModal";
 
 export function ConfigCard({ config }: { config: ConfigWithStats }) {
   const router = useRouter();
   const [copied, setCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function copyKey() {
-    await navigator.clipboard.writeText(config.master_key);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(config.master_key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setError("Couldn't copy — copy manually instead");
+      setTimeout(() => setError(""), 3000);
+    }
   }
 
   async function handleDelete() {
-    if (!confirm(`Delete "${config.name}"? This will also delete all its keys.`)) return;
+    setConfirmOpen(false);
     setDeleting(true);
-    await fetch(`/api/configs/${config.id}`, { method: "DELETE" });
-    router.refresh();
+    setError("");
+    try {
+      const res = await fetch(`/api/configs/${config.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Request failed");
+      router.refresh();
+    } catch {
+      setError("Failed to delete — try again");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   const maskedKey =
@@ -35,14 +51,17 @@ export function ConfigCard({ config }: { config: ConfigWithStats }) {
           </p>
         </div>
         <button
-          onClick={handleDelete}
+          onClick={() => setConfirmOpen(true)}
           disabled={deleting}
-          className="text-[#8b8b9e] hover:text-red-400 transition-colors text-sm px-2 py-1 rounded"
+          aria-label={`Delete config ${config.name}`}
           title="Delete config"
+          className="text-[#8b8b9e] hover:text-red-400 transition-colors text-sm min-w-[44px] min-h-[44px] flex items-center justify-center rounded shrink-0"
         >
           {deleting ? "…" : "✕"}
         </button>
       </div>
+
+      {error && <p className="text-red-400 text-xs">{error}</p>}
 
       <div className="flex gap-3">
         <div className="flex-1 text-center bg-[#0a0a10] rounded-lg py-2">
@@ -65,7 +84,8 @@ export function ConfigCard({ config }: { config: ConfigWithStats }) {
         </code>
         <button
           onClick={copyKey}
-          className="text-xs text-[#00C4B4] hover:text-white transition-colors shrink-0"
+          aria-label="Copy master key"
+          className="text-xs text-[#00C4B4] hover:text-white transition-colors shrink-0 min-h-[44px] px-2 flex items-center"
         >
           {copied ? "Copied!" : "Copy"}
         </button>
@@ -73,10 +93,19 @@ export function ConfigCard({ config }: { config: ConfigWithStats }) {
 
       <a
         href={`/configs/${config.id}`}
-        className="block text-center text-sm bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/20 rounded-lg py-2 transition-colors"
+        className="flex items-center justify-center text-center text-sm bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/20 rounded-lg transition-colors min-h-[44px]"
       >
         Manage Keys →
       </a>
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Delete config"
+        message={`Delete "${config.name}"? This will also delete all its keys.`}
+        confirmLabel="Delete"
+        onConfirm={handleDelete}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

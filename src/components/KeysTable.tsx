@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiKey } from "@/lib/types";
+import { ConfirmModal } from "./ConfirmModal";
 
 function maskKey(k: string): string {
   if (k.length <= 10) return k.slice(0, 3) + "••••";
@@ -33,13 +34,22 @@ export function KeysTable({
 }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [error, setError] = useState("");
+  const [confirmKeyId, setConfirmKeyId] = useState<number | null>(null);
 
   async function handleDelete(keyId: number) {
-    if (!confirm("Delete this API key?")) return;
+    setConfirmKeyId(null);
     setDeleting(keyId);
-    await fetch(`/api/configs/${configId}/keys/${keyId}`, { method: "DELETE" });
-    setDeleting(null);
-    router.refresh();
+    setError("");
+    try {
+      const res = await fetch(`/api/configs/${configId}/keys/${keyId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Request failed");
+      router.refresh();
+    } catch {
+      setError("Failed to delete key — try again");
+    } finally {
+      setDeleting(null);
+    }
   }
 
   if (keys.length === 0) {
@@ -52,6 +62,7 @@ export function KeysTable({
 
   return (
     <div className="overflow-x-auto">
+      {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-[#2a2a38] text-[#8b8b9e] text-left">
@@ -86,10 +97,11 @@ export function KeysTable({
               </td>
               <td className="py-3">
                 <button
-                  onClick={() => handleDelete(key.id)}
+                  onClick={() => setConfirmKeyId(key.id)}
                   disabled={deleting === key.id}
-                  className="text-[#8b8b9e] hover:text-red-400 transition-colors text-xs px-1.5 py-1 rounded"
+                  aria-label={`Delete key ${key.order_index}`}
                   title="Delete key"
+                  className="text-[#8b8b9e] hover:text-red-400 transition-colors text-xs min-w-[44px] min-h-[44px] flex items-center justify-center rounded"
                 >
                   {deleting === key.id ? "…" : "✕"}
                 </button>
@@ -98,6 +110,15 @@ export function KeysTable({
           ))}
         </tbody>
       </table>
+
+      <ConfirmModal
+        open={confirmKeyId !== null}
+        title="Delete key"
+        message="Delete this API key? This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => confirmKeyId !== null && handleDelete(confirmKeyId)}
+        onCancel={() => setConfirmKeyId(null)}
+      />
     </div>
   );
 }

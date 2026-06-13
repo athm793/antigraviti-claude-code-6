@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useId, cloneElement, isValidElement } from "react";
 import { useRouter } from "next/navigation";
 
 export default function NewConfigPage() {
@@ -31,34 +31,39 @@ export default function NewConfigPage() {
       .map((s) => parseInt(s.trim(), 10))
       .filter((n) => !isNaN(n));
 
-    const res = await fetch("/api/configs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        target_base_url: form.target_base_url,
-        auth_header_name: form.auth_header_name,
-        auth_header_prefix: form.auth_header_prefix,
-        rate_limit_codes: rateLimitCodes,
-        cooldown_minutes: parseInt(form.cooldown_minutes, 10) || 0,
-      }),
-    });
+    try {
+      const res = await fetch("/api/configs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name,
+          target_base_url: form.target_base_url,
+          auth_header_name: form.auth_header_name,
+          auth_header_prefix: form.auth_header_prefix,
+          rate_limit_codes: rateLimitCodes,
+          cooldown_minutes: parseInt(form.cooldown_minutes, 10) || 0,
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error ?? "Failed to create config");
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error ?? "Failed to create config");
+        setSaving(false);
+        return;
+      }
+
+      const config = await res.json();
+      router.push(`/configs/${config.id}`);
+    } catch {
+      setError("Network error — check your connection and try again");
       setSaving(false);
-      return;
     }
-
-    const config = await res.json();
-    router.push(`/configs/${config.id}`);
   }
 
   return (
     <div className="max-w-xl mx-auto flex flex-col gap-8">
       <div>
-        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors">
+        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors min-h-[44px] inline-flex items-center">
           ← Back
         </a>
         <h1 className="text-2xl font-bold text-white mt-3">New Proxy Config</h1>
@@ -81,6 +86,8 @@ export default function NewConfigPage() {
         <Field label="Target Base URL" hint="The API's base URL — no trailing slash">
           <input
             required
+            type="url"
+            pattern="https?://.+"
             value={form.target_base_url}
             onChange={(e) => set("target_base_url", e.target.value)}
             placeholder="https://api.openai.com"
@@ -166,10 +173,14 @@ function Field({
   hint?: string;
   children: React.ReactNode;
 }) {
+  const id = useId();
+  const child = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, { id })
+    : children;
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-[#c8c8d8]">{label}</label>
-      {children}
+      <label htmlFor={id} className="text-sm font-medium text-[#c8c8d8]">{label}</label>
+      {child}
       {hint && <p className="text-xs text-[#8b8b9e]">{hint}</p>}
     </div>
   );

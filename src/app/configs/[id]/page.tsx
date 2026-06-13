@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
-import { getConfig, listKeys, getKeyStats } from "@/lib/db";
+import { getConfig, listKeys, getKeyStats, getAuditLog } from "@/lib/db";
 import { KeysTable } from "@/components/KeysTable";
 import { AddKeysForm } from "@/components/AddKeysForm";
 import { CurlExample } from "@/components/CurlExample";
 import { StatsBar } from "@/components/StatsBar";
 import { MasterKeyDisplay } from "@/components/MasterKeyDisplay";
 import { EditConfigForm } from "@/components/EditConfigForm";
+import { TestConnectionButton } from "@/components/TestConnectionButton";
+import { AuditLog } from "@/components/AuditLog";
 
 export const dynamic = "force-dynamic";
 
@@ -15,10 +17,11 @@ export default async function ConfigDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [config, keys, stats] = await Promise.all([
+  const [config, keys, stats, auditEntries] = await Promise.all([
     getConfig(id),
     listKeys(id),
     getKeyStats(id),
+    getAuditLog(id),
   ]);
 
   if (!config) notFound();
@@ -26,7 +29,7 @@ export default async function ConfigDetailPage({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex items-start gap-4">
-        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors mt-1 shrink-0">
+        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors shrink-0 min-h-[44px] flex items-center">
           ← Back
         </a>
         <div className="flex-1 min-w-0">
@@ -39,10 +42,25 @@ export default async function ConfigDetailPage({
 
       <EditConfigForm config={config} />
 
-      <MasterKeyDisplay masterKey={config.master_key} />
+      <div className="flex flex-col gap-2">
+        <MasterKeyDisplay configId={config.id} masterKey={config.master_key} />
+        <p className="text-[#8b8b9e] text-xs px-1">
+          This master key is what your client app sends to KeyProxy — it&apos;s separate
+          from the real API keys below, which never leave the server. Anyone with this
+          master key can use your key pool, so treat it like a password.
+        </p>
+      </div>
 
       <Section title="Key Pool">
         <StatsBar stats={stats} configId={config.id} />
+        <p className="text-[#8b8b9e] text-xs">
+          <span className="text-[#00C4B4]">Active</span> keys are used for new requests.{" "}
+          <span className="text-red-400">Exhausted</span> keys hit a rate limit and won&apos;t
+          be retried.{" "}
+          <span className="text-amber-400">Cooldown</span> keys hit a rate limit but will
+          automatically go active again after the cooldown period.
+        </p>
+        <TestConnectionButton configId={config.id} />
       </Section>
 
       <Section title="Add Keys">
@@ -55,6 +73,14 @@ export default async function ConfigDetailPage({
 
       <Section title="cURL Usage">
         <CurlExample configId={config.id} masterKey={config.master_key} />
+        <p className="text-[#8b8b9e] text-xs">
+          Point your app at this URL instead of the real API — KeyProxy swaps in the
+          next available key and rotates automatically if one gets rate-limited.
+        </p>
+      </Section>
+
+      <Section title="Activity">
+        <AuditLog entries={auditEntries} />
       </Section>
     </div>
   );

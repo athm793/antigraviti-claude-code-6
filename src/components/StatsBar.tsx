@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { KeyStats } from "@/lib/types";
+import { ConfirmModal } from "./ConfirmModal";
 
 export function StatsBar({
   stats,
@@ -13,13 +14,22 @@ export function StatsBar({
 }) {
   const router = useRouter();
   const [resetting, setResetting] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function handleReset() {
-    if (!confirm("Reset all exhausted and cooldown keys back to active?")) return;
+    setConfirmOpen(false);
     setResetting(true);
-    await fetch(`/api/configs/${configId}/reset`, { method: "POST" });
-    setResetting(false);
-    router.refresh();
+    setError("");
+    try {
+      const res = await fetch(`/api/configs/${configId}/reset`, { method: "POST" });
+      if (!res.ok) throw new Error("Request failed");
+      router.refresh();
+    } catch {
+      setError("Failed to reset keys — try again");
+    } finally {
+      setResetting(false);
+    }
   }
 
   return (
@@ -30,15 +40,25 @@ export function StatsBar({
         <Stat label="Cooldown" value={stats.cooldown} color="text-amber-400" />
         <Stat label="Total" value={stats.total} color="text-[#8b8b9e]" />
       </div>
+      {error && <p className="text-red-400 text-xs">{error}</p>}
       {(stats.exhausted > 0 || stats.cooldown > 0) && (
         <button
-          onClick={handleReset}
+          onClick={() => setConfirmOpen(true)}
           disabled={resetting}
-          className="text-sm text-[#8b8b9e] hover:text-white border border-[#2a2a38] hover:border-[#363650] px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          className="text-sm text-[#8b8b9e] hover:text-white border border-[#2a2a38] hover:border-[#363650] px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50 min-h-[44px]"
         >
           {resetting ? "Resetting…" : "Reset All Keys"}
         </button>
       )}
+
+      <ConfirmModal
+        open={confirmOpen}
+        title="Reset all keys"
+        message="Reset all exhausted and cooldown keys back to active?"
+        confirmLabel="Reset"
+        onConfirm={handleReset}
+        onCancel={() => setConfirmOpen(false)}
+      />
     </div>
   );
 }

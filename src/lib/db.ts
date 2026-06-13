@@ -8,16 +8,22 @@ import type {
   CreateConfigInput,
   UpdateConfigInput,
   InsertKeysResult,
+  AuditLogEntry,
 } from "./types";
 
-function getSQL(): NeonQueryFunction<false, false> {
+export function getSQL(): NeonQueryFunction<false, false> {
   if (!process.env.DATABASE_URL) {
     throw new Error("DATABASE_URL environment variable is not set");
   }
   return neon(process.env.DATABASE_URL);
 }
 
+// Cached per warm serverless instance so we don't run 4 DDL statements on
+// every request — schema only needs to be ensured once per cold start.
+let schemaInitialized = false;
+
 export async function initSchema(): Promise<void> {
+  if (schemaInitialized) return;
   const sql = getSQL();
   await sql`
     CREATE TABLE IF NOT EXISTS proxy_configs (
@@ -46,6 +52,32 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_api_keys_config_status ON api_keys(config_id, status, order_index)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_master_key ON proxy_configs(master_key)`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id         SERIAL      PRIMARY KEY,
+      config_id  TEXT        NOT NULL REFERENCES proxy_configs(id) ON DELETE CASCADE,
+      action     TEXT        NOT NULL,
+      detail     TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_audit_log_config_created ON audit_log(config_id, created_at DESC)`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id            TEXT        PRIMARY KEY,
+      email         TEXT        UNIQUE NOT NULL,
+      password_hash TEXT        NOT NULL,
+      name          TEXT        NOT NULL DEFAULT '',
+      is_admin      BOOLEAN     NOT NULL DEFAULT false,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  schemaInitialized = true;
+}
+
+function toISOString(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : new Date(value as string).toISOString();
 }
 
 function rowToConfig(row: Record<string, unknown>): ProxyConfig {
@@ -58,7 +90,7 @@ function rowToConfig(row: Record<string, unknown>): ProxyConfig {
     rate_limit_codes: row.rate_limit_codes as number[],
     cooldown_minutes: row.cooldown_minutes as number,
     master_key: row.master_key as string,
-    created_at: String(row.created_at),
+    created_at: toISOString(row.created_at),
   };
 }
 
@@ -69,10 +101,39 @@ function rowToKey(row: Record<string, unknown>): ApiKey {
     key_value: row.key_value as string,
     order_index: row.order_index as number,
     status: row.status as ApiKey["status"],
-    exhausted_at: row.exhausted_at ? String(row.exhausted_at) : null,
+    exhausted_at: row.exhausted_at ? toISOString(row.exhausted_at) : null,
     request_count: row.request_count as number,
-    created_at: String(row.created_at),
+    created_at: toISOString(row.created_at),
   };
+}
+
+function rowToAuditEntry(row: Record<string, unknown>): AuditLogEntry {
+  return {
+    id: row.id as number,
+    config_id: row.config_id as string,
+    action: row.action as string,
+    detail: (row.detail as string) ?? null,
+    created_at: toISOString(row.created_at),
+  };
+}
+
+async function logAudit(configId: string, action: string, detail?: string): Promise<void> {
+  const sql = getSQL();
+  await sql`
+    INSERT INTO audit_log (config_id, action, detail)
+    VALUES (${configId}, ${action}, ${detail ?? null})
+  `;
+}
+
+export async function getAuditLog(configId: string, limit = 20): Promise<AuditLogEntry[]> {
+  const sql = getSQL();
+  await initSchema();
+  const rows = await sql`
+    SELECT * FROM audit_log WHERE config_id = ${configId}
+    ORDER BY created_at DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => rowToAuditEntry(r as Record<string, unknown>));
 }
 
 export async function listConfigs(): Promise<ConfigWithStats[]> {
@@ -151,6 +212,20 @@ export async function updateConfig(
     WHERE id = ${id}
     RETURNING *
   `;
+  if (rows[0]) await logAudit(id, "config_updated", "Updated config settings");
+  return rows[0] ? rowToConfig(rows[0] as Record<string, unknown>) : null;
+}
+
+export async function rotateMasterKey(id: string): Promise<ProxyConfig | null> {
+  const sql = getSQL();
+  await initSchema();
+  const masterKey = uuidv4();
+  const rows = await sql`
+    UPDATE proxy_configs SET master_key = ${masterKey}
+    WHERE id = ${id}
+    RETURNING *
+  `;
+  if (rows[0]) await logAudit(id, "master_key_rotated", "Master key rotated");
   return rows[0] ? rowToConfig(rows[0] as Record<string, unknown>) : null;
 }
 
@@ -201,6 +276,7 @@ export async function resetAllKeys(configId: string): Promise<void> {
     UPDATE api_keys SET status = 'active', exhausted_at = NULL
     WHERE config_id = ${configId}
   `;
+  await logAudit(configId, "keys_reset", "Reset all exhausted/cooldown keys to active");
 }
 
 export async function markKeyExhausted(
@@ -223,12 +299,22 @@ export async function insertKeys(
   const sql = getSQL();
   if (keyValues.length === 0) return { inserted: 0, skipped: 0 };
 
+  // Dedupe within the pasted batch itself, preserving first occurrence.
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  for (const k of keyValues) {
+    if (!seen.has(k)) {
+      seen.add(k);
+      deduped.push(k);
+    }
+  }
+
   const existingRows = await sql`
     SELECT key_value FROM api_keys WHERE config_id = ${configId}
   `;
   const existingSet = new Set(existingRows.map((r) => r.key_value as string));
 
-  const newKeys = keyValues.filter((k) => !existingSet.has(k));
+  const newKeys = deduped.filter((k) => !existingSet.has(k));
   const skipped = keyValues.length - newKeys.length;
 
   if (newKeys.length === 0) return { inserted: 0, skipped };
@@ -236,15 +322,19 @@ export async function insertKeys(
   const maxResult = await sql`
     SELECT COALESCE(MAX(order_index), 0) AS max_idx FROM api_keys WHERE config_id = ${configId}
   `;
-  let nextIdx = (maxResult[0].max_idx as number) + 1;
+  const startIdx = (maxResult[0].max_idx as number) + 1;
+  const orderIndexes = newKeys.map((_, i) => startIdx + i);
 
-  for (const keyValue of newKeys) {
-    await sql`
-      INSERT INTO api_keys (config_id, key_value, order_index)
-      VALUES (${configId}, ${keyValue}, ${nextIdx})
-    `;
-    nextIdx++;
-  }
+  await sql`
+    INSERT INTO api_keys (config_id, key_value, order_index)
+    SELECT ${configId}, unnest(${newKeys}::text[]), unnest(${orderIndexes}::int[])
+  `;
+
+  await logAudit(
+    configId,
+    "keys_added",
+    `Added ${newKeys.length} key${newKeys.length === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} duplicate${skipped === 1 ? "" : "s"} skipped)` : ""}`
+  );
 
   return { inserted: newKeys.length, skipped };
 }
@@ -256,7 +346,9 @@ export async function incrementRequestCount(keyId: number): Promise<void> {
 
 export async function deleteKey(keyId: number): Promise<void> {
   const sql = getSQL();
-  await sql`DELETE FROM api_keys WHERE id = ${keyId}`;
+  const rows = await sql`DELETE FROM api_keys WHERE id = ${keyId} RETURNING config_id`;
+  const configId = rows[0]?.config_id as string | undefined;
+  if (configId) await logAudit(configId, "key_deleted", "Deleted an API key");
 }
 
 export async function getKeyStats(configId: string): Promise<KeyStats> {

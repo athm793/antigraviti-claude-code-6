@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useId, cloneElement, isValidElement } from "react";
 import { useRouter } from "next/navigation";
 import type { ProxyConfig } from "@/lib/types";
 
@@ -33,29 +33,34 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
       .map((s) => parseInt(s.trim(), 10))
       .filter((n) => !isNaN(n));
 
-    const res = await fetch(`/api/configs/${config.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.name,
-        target_base_url: form.target_base_url,
-        auth_header_name: form.auth_header_name,
-        auth_header_prefix: form.auth_header_prefix,
-        rate_limit_codes: rateLimitCodes,
-        cooldown_minutes: parseInt(form.cooldown_minutes, 10) || 0,
-      }),
-    });
+    try {
+      const res = await fetch(`/api/configs/${config.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.name,
+          target_base_url: form.target_base_url,
+          auth_header_name: form.auth_header_name,
+          auth_header_prefix: form.auth_header_prefix,
+          rate_limit_codes: rateLimitCodes,
+          cooldown_minutes: parseInt(form.cooldown_minutes, 10) || 0,
+        }),
+      });
 
-    if (!res.ok) {
-      const data = await res.json();
-      setError(data.error ?? "Failed to save");
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error ?? "Failed to save");
+        setSaving(false);
+        return;
+      }
+
       setSaving(false);
-      return;
+      setEditing(false);
+      router.refresh();
+    } catch {
+      setError("Network error — check your connection and try again");
+      setSaving(false);
     }
-
-    setSaving(false);
-    setEditing(false);
-    router.refresh();
   }
 
   return (
@@ -65,7 +70,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
         {!editing && (
           <button
             onClick={() => setEditing(true)}
-            className="bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 py-1.5 rounded-lg transition-colors"
+            className="bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors"
           >
             Edit Settings
           </button>
@@ -111,7 +116,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
               <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
             </Field>
             <Field label="Target Base URL">
-              <input required value={form.target_base_url} onChange={(e) => set("target_base_url", e.target.value)} className={inputCls} />
+              <input required type="url" pattern="https?://.+" value={form.target_base_url} onChange={(e) => set("target_base_url", e.target.value)} className={inputCls} />
             </Field>
             <Field label="Auth Header Name">
               <input required value={form.auth_header_name} onChange={(e) => set("auth_header_name", e.target.value)} className={inputCls} />
@@ -135,14 +140,14 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
             <button
               type="submit"
               disabled={saving}
-              className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors"
+              className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors"
             >
               {saving ? "Saving…" : "Save Changes"}
             </button>
             <button
               type="button"
               onClick={() => setEditing(false)}
-              className="text-sm text-[#8b8b9e] hover:text-white transition-colors px-5 py-2"
+              className="text-sm text-[#8b8b9e] hover:text-white transition-colors px-5 min-h-[44px]"
             >
               Cancel
             </button>
@@ -157,10 +162,14 @@ const inputCls =
   "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  const id = useId();
+  const child = isValidElement(children)
+    ? cloneElement(children as React.ReactElement<{ id?: string }>, { id })
+    : children;
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-sm font-medium text-[#c8c8d8]">{label}</label>
-      {children}
+      <label htmlFor={id} className="text-sm font-medium text-[#c8c8d8]">{label}</label>
+      {child}
     </div>
   );
 }

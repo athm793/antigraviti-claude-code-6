@@ -7,6 +7,7 @@ export function AddKeysForm({ configId }: { configId: string }) {
   const router = useRouter();
   const [value, setValue] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [result, setResult] = useState<{
     inserted: number;
     skipped: number;
@@ -23,28 +24,43 @@ export function AddKeysForm({ configId }: { configId: string }) {
     if (keyCount === 0) return;
     setLoading(true);
     setResult(null);
+    setError("");
 
     const keys = value
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const res = await fetch(`/api/configs/${configId}/keys`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keys }),
-    });
+    try {
+      const res = await fetch(`/api/configs/${configId}/keys`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys }),
+      });
 
-    const data = await res.json();
-    setResult(data);
-    setValue("");
-    setLoading(false);
-    router.refresh();
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error ?? "Failed to add keys");
+      }
+
+      const data = await res.json();
+      setResult(data);
+      setValue("");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add keys");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+      <label htmlFor="add-keys-textarea" className="text-sm font-medium text-[#c8c8d8]">
+        API keys (one per line)
+      </label>
       <textarea
+        id="add-keys-textarea"
         ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -52,11 +68,11 @@ export function AddKeysForm({ configId }: { configId: string }) {
         rows={6}
         className="w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-3 text-sm font-mono text-[#c8c8d8] placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 resize-y"
       />
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <button
           type="submit"
           disabled={loading || keyCount === 0}
-          className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors"
+          className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors min-h-[44px]"
         >
           {loading ? "Adding…" : `Add ${keyCount > 0 ? keyCount : ""} Key${keyCount !== 1 ? "s" : ""}`}
         </button>
@@ -73,6 +89,7 @@ export function AddKeysForm({ configId }: { configId: string }) {
             )}
           </span>
         )}
+        {error && <span className="text-red-400 text-sm">{error}</span>}
       </div>
     </form>
   );

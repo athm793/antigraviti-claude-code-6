@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export function CurlExample({
   configId,
@@ -10,11 +10,13 @@ export function CurlExample({
   masterKey: string;
 }) {
   const [copied, setCopied] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("https://your-app.vercel.app");
 
-  const baseUrl =
-    typeof window !== "undefined"
-      ? window.location.origin
-      : "https://your-app.vercel.app";
+  // Set on mount only — avoids a server/client hydration mismatch from
+  // reading window.location during render.
+  useEffect(() => {
+    setBaseUrl(window.location.origin);
+  }, []);
 
   const example = `curl ${baseUrl}/api/proxy/${configId}/your/api/path \\
   -H "x-master-key: ${masterKey}" \\
@@ -22,9 +24,13 @@ export function CurlExample({
   -d '{"key": "value"}'`;
 
   async function copy() {
-    await navigator.clipboard.writeText(example);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(example);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // clipboard API unavailable (e.g. insecure context) — silently ignore
+    }
   }
 
   return (
@@ -33,7 +39,8 @@ export function CurlExample({
         <span className="text-[#8b8b9e] text-xs font-medium">cURL Example</span>
         <button
           onClick={copy}
-          className="text-xs text-[#00C4B4] hover:text-white transition-colors"
+          aria-label="Copy curl command"
+          className="text-xs text-[#00C4B4] hover:text-white transition-colors min-h-[44px] px-2 -my-2.5 flex items-center"
         >
           {copied ? "Copied!" : "Copy"}
         </button>

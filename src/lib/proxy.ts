@@ -59,11 +59,11 @@ export async function handleProxyRequest(
 ): Promise<Response> {
   const rateLimitCodes = new Set(config.rate_limit_codes);
 
-  for (let attempt = 0; attempt < MAX_ROTATION_ATTEMPTS; attempt++) {
-    if (config.cooldown_minutes > 0) {
-      await resetCooldownKeys(config.id, config.cooldown_minutes);
-    }
+  if (config.cooldown_minutes > 0) {
+    await resetCooldownKeys(config.id, config.cooldown_minutes);
+  }
 
+  for (let attempt = 0; attempt < MAX_ROTATION_ATTEMPTS; attempt++) {
     const key = await getActiveKey(config.id);
     if (!key) {
       return Response.json(

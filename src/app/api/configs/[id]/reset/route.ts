@@ -1,12 +1,16 @@
 import { type NextRequest } from "next/server";
 import { resetAllKeys, getKeyStats } from "@/lib/db";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 type Params = { id: string };
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
+  const limited = checkRateLimit(req, "keys:reset", 20);
+  if (limited) return limited;
+
   try {
     const { id } = await params;
     await resetAllKeys(id);
