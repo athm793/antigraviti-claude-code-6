@@ -31,7 +31,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const updated = await updateUser(id, body);
     return Response.json(updated);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
 
@@ -62,6 +63,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     await deleteUser(id);
     return Response.json({ ok: true });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

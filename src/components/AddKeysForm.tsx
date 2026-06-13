@@ -74,7 +74,7 @@ export function AddKeysForm({ configId }: { configId: string }) {
           disabled={loading || keyCount === 0}
           className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors min-h-[44px]"
         >
-          {loading ? "Adding…" : `Add ${keyCount > 0 ? keyCount : ""} Key${keyCount !== 1 ? "s" : ""}`}
+          {loading ? "Adding…" : keyCount > 0 ? `Add ${keyCount} Key${keyCount !== 1 ? "s" : ""}` : "Add Keys"}
         </button>
         {keyCount > 0 && !loading && (
           <span className="text-[#8b8b9e] text-sm">

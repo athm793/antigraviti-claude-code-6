@@ -17,6 +17,7 @@ export async function POST(
     if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(updated);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

@@ -17,7 +17,8 @@ export async function GET(
     const stats = await getKeyStats(id);
     return Response.json({ ...config, stats });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
 
@@ -44,7 +45,8 @@ export async function PATCH(
     if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(updated);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
 
@@ -60,6 +62,7 @@ export async function DELETE(
     await deleteConfig(id);
     return new Response(null, { status: 204 });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

@@ -17,6 +17,7 @@ export async function POST(
     const stats = await getKeyStats(id);
     return Response.json({ success: true, stats });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

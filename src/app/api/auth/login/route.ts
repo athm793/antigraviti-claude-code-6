@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     void passwordHash;
     return Response.json({ user: safeUser });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

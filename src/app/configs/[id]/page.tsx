@@ -60,7 +60,7 @@ export default async function ConfigDetailPage({
           <span className="text-amber-400">Cooldown</span> keys hit a rate limit but will
           automatically go active again after the cooldown period.
         </p>
-        <TestConnectionButton configId={config.id} />
+        <TestConnectionButton key={keys.length} configId={config.id} />
       </Section>
 
       <Section title="Add Keys">

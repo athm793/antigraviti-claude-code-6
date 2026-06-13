@@ -112,22 +112,22 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Config Name">
+            <Field label="Config Name" hint="A name to help you recognize this config">
               <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
             </Field>
-            <Field label="Target Base URL">
+            <Field label="Target Base URL" hint="The API's base URL — no trailing slash">
               <input required type="url" pattern="https?://.+" value={form.target_base_url} onChange={(e) => set("target_base_url", e.target.value)} className={inputCls} />
             </Field>
-            <Field label="Auth Header Name">
+            <Field label="Auth Header Name" hint="Header to inject the key into">
               <input required value={form.auth_header_name} onChange={(e) => set("auth_header_name", e.target.value)} className={inputCls} />
             </Field>
-            <Field label='Auth Header Prefix (e.g. "Bearer ")'>
+            <Field label="Auth Header Prefix" hint='Include trailing space (e.g. "Bearer ")'>
               <input value={form.auth_header_prefix} onChange={(e) => set("auth_header_prefix", e.target.value)} className={`${inputCls} font-mono`} />
             </Field>
-            <Field label="Rate Limit Codes (comma-separated)">
+            <Field label="Rate Limit Status Codes" hint="Comma-separated codes that trigger rotation">
               <input value={form.rate_limit_codes} onChange={(e) => set("rate_limit_codes", e.target.value)} placeholder="429, 503" className={inputCls} />
             </Field>
-            <Field label="Cooldown Minutes (0 = skip forever)">
+            <Field label="Cooldown Minutes" hint="0 = skip exhausted keys forever; >0 = retry after N minutes">
               <input type="number" min="0" value={form.cooldown_minutes} onChange={(e) => set("cooldown_minutes", e.target.value)} className={inputCls} />
             </Field>
           </div>
@@ -159,9 +159,17 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
 }
 
 const inputCls =
-  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
+  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 min-h-[44px] text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   const id = useId();
   const child = isValidElement(children)
     ? cloneElement(children as React.ReactElement<{ id?: string }>, { id })
@@ -170,6 +178,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="flex flex-col gap-1.5">
       <label htmlFor={id} className="text-sm font-medium text-[#c8c8d8]">{label}</label>
       {child}
+      {hint && <p className="text-xs text-[#8b8b9e]">{hint}</p>}
     </div>
   );
 }

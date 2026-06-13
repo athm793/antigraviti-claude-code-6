@@ -229,6 +229,7 @@ function UserRow({
   const [newPassword, setNewPassword] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   async function patch(body: Record<string, unknown>) {
     onError("");
@@ -262,6 +263,8 @@ function UserRow({
     await patch({ password: newPassword });
     setNewPassword("");
     setResetOpen(false);
+    setResetSuccess(true);
+    setTimeout(() => setResetSuccess(false), 4000);
   }
 
   async function handleToggleAdmin() {
@@ -307,6 +310,12 @@ function UserRow({
             )}
           </div>
           <p className="text-[#8b8b9e] text-xs mt-0.5">{user.email}</p>
+          {resetSuccess && (
+            <p className="text-[#00C4B4] text-xs mt-1">
+              Password reset. Share the new password with this person — they
+              can sign in with it right away.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -385,4 +394,4 @@ function UserRow({
 }
 
 const inputCls =
-  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
+  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 min-h-[44px] text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";

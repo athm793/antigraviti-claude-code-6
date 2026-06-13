@@ -13,9 +13,14 @@ export async function DELETE(
 
   try {
     const { keyId } = await params;
-    await deleteKey(Number(keyId));
+    const id = Number(keyId);
+    if (!Number.isInteger(id)) {
+      return Response.json({ error: "Invalid key id" }, { status: 400 });
+    }
+    await deleteKey(id);
     return new Response(null, { status: 204 });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }

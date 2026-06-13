@@ -9,7 +9,8 @@ export async function GET() {
     const configs = await listConfigs();
     return Response.json(configs);
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
 
@@ -45,6 +46,7 @@ export async function POST(req: NextRequest) {
 
     return Response.json(config, { status: 201 });
   } catch (err) {
-    return Response.json({ error: String(err) }, { status: 500 });
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
   }
 }
