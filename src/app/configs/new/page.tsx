@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useId, cloneElement, isValidElement } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Field } from "@/components/ui/Field";
+import { ArrowLeft, ArrowRight, Spinner } from "@/components/ui/Icon";
+import { backLinkCls, btnPrimary, errorBoxCls, inputCls } from "@/lib/ui";
 
 export default function NewConfigPage() {
   const router = useRouter();
@@ -63,27 +66,28 @@ export default function NewConfigPage() {
   return (
     <div className="max-w-xl mx-auto flex flex-col gap-8">
       <div>
-        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors min-h-[44px] inline-flex items-center">
-          ← Back
+        <a href="/" className={backLinkCls}>
+          <ArrowLeft className="w-4 h-4" />
+          Back
         </a>
-        <h1 className="text-2xl font-bold text-white mt-3">New Proxy Config</h1>
+        <h1 className="text-2xl font-bold text-white mt-3">New provider</h1>
         <p className="text-[#8b8b9e] text-sm mt-1">
           Configure a target API to proxy. You&apos;ll add API keys after creation.
         </p>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5">
-        <Field label="Config Name" hint="e.g. OpenAI Production">
+        <Field label="Provider name" hint="e.g. OpenAI production">
           <input
             required
             value={form.name}
             onChange={(e) => set("name", e.target.value)}
-            placeholder="My API Rotation"
+            placeholder="OpenAI personalisation"
             className={inputCls}
           />
         </Field>
 
-        <Field label="Target Base URL" hint="The API's base URL — no trailing slash">
+        <Field label="Target base URL" hint="The API's base URL — no trailing slash">
           <input
             required
             type="url"
@@ -96,7 +100,7 @@ export default function NewConfigPage() {
         </Field>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Auth Header Name" hint="Header to inject the key into">
+          <Field label="Auth header name" hint="Header to inject the key into">
             <input
               required
               value={form.auth_header_name}
@@ -106,7 +110,7 @@ export default function NewConfigPage() {
             />
           </Field>
 
-          <Field label="Auth Header Prefix" hint='Include trailing space (e.g. "Bearer ")'>
+          <Field label="Auth header prefix" hint='Include trailing space (e.g. "Bearer ")'>
             <input
               value={form.auth_header_prefix}
               onChange={(e) => set("auth_header_prefix", e.target.value)}
@@ -118,8 +122,8 @@ export default function NewConfigPage() {
 
         <div className="grid grid-cols-2 gap-4">
           <Field
-            label="Rate Limit Status Codes"
-            hint="Comma-separated codes that trigger rotation"
+            label="Rate limit status codes"
+            hint="Comma-separated 4xx/5xx codes that trigger rotation"
           >
             <input
               value={form.rate_limit_codes}
@@ -130,8 +134,8 @@ export default function NewConfigPage() {
           </Field>
 
           <Field
-            label="Cooldown Minutes"
-            hint="0 = skip exhausted keys forever; >0 = retry after N minutes"
+            label="Cooldown minutes"
+            hint="0 = skip exhausted keys forever; above 0 = retry after N minutes"
           >
             <input
               type="number"
@@ -143,45 +147,18 @@ export default function NewConfigPage() {
           </Field>
         </div>
 
-        {error && (
-          <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">
-            {error}
-          </p>
-        )}
+        {error && <p className={errorBoxCls}>{error}</p>}
 
         <button
           type="submit"
           disabled={saving}
-          className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 text-black font-semibold text-sm px-6 py-3 rounded-lg transition-colors"
+          className={`${btnPrimary} gap-2 self-start min-w-[11rem]`}
         >
-          {saving ? "Creating…" : "Create Config →"}
+          {saving && <Spinner className="w-4 h-4" />}
+          {saving ? "Creating…" : "Create provider"}
+          {!saving && <ArrowRight className="w-4 h-4" />}
         </button>
       </form>
-    </div>
-  );
-}
-
-const inputCls =
-  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 min-h-[44px] text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  const id = useId();
-  const child = isValidElement(children)
-    ? cloneElement(children as React.ReactElement<{ id?: string }>, { id })
-    : children;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-[#c8c8d8]">{label}</label>
-      {child}
-      {hint && <p className="text-xs text-[#8b8b9e]">{hint}</p>}
     </div>
   );
 }

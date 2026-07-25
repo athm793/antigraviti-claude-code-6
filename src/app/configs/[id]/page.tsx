@@ -1,5 +1,6 @@
-import { notFound } from "next/navigation";
-import { getConfig, listKeys, getKeyStats, getAuditLog } from "@/lib/db";
+import { notFound, redirect } from "next/navigation";
+import { listKeyViews, getKeyStats, getAuditLog } from "@/lib/db";
+import { authorizeConfig } from "@/lib/auth";
 import { KeysTable } from "@/components/KeysTable";
 import { AddKeysForm } from "@/components/AddKeysForm";
 import { CurlExample } from "@/components/CurlExample";
@@ -8,6 +9,8 @@ import { MasterKeyDisplay } from "@/components/MasterKeyDisplay";
 import { EditConfigForm } from "@/components/EditConfigForm";
 import { TestConnectionButton } from "@/components/TestConnectionButton";
 import { AuditLog } from "@/components/AuditLog";
+import { ArrowLeft } from "@/components/ui/Icon";
+import { backLinkCls, cardCls } from "@/lib/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -17,20 +20,26 @@ export default async function ConfigDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [config, keys, stats, auditEntries] = await Promise.all([
-    getConfig(id),
-    listKeys(id),
+
+  const auth = await authorizeConfig(id);
+  if (!auth.ok) {
+    if (auth.status === 401) redirect(`/login?next=/configs/${id}`);
+    notFound();
+  }
+  const config = auth.config;
+
+  const [keys, stats, auditEntries] = await Promise.all([
+    listKeyViews(id),
     getKeyStats(id),
     getAuditLog(id),
   ]);
 
-  if (!config) notFound();
-
   return (
-    <div className="flex flex-col gap-8">
+    <div className="max-w-5xl mx-auto flex flex-col gap-8">
       <div className="flex items-start gap-4">
-        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors shrink-0 min-h-[44px] flex items-center">
-          ← Back
+        <a href="/" className={backLinkCls}>
+          <ArrowLeft className="w-4 h-4" />
+          Back
         </a>
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-white">{config.name}</h1>
@@ -51,7 +60,7 @@ export default async function ConfigDetailPage({
         </p>
       </div>
 
-      <Section title="Key Pool">
+      <Section title="Key pool">
         <StatsBar stats={stats} configId={config.id} />
         <p className="text-[#8b8b9e] text-xs">
           <span className="text-[#00C4B4]">Active</span> keys are used for new requests.{" "}
@@ -60,10 +69,10 @@ export default async function ConfigDetailPage({
           <span className="text-amber-400">Cooldown</span> keys hit a rate limit but will
           automatically go active again after the cooldown period.
         </p>
-        <TestConnectionButton key={keys.length} configId={config.id} />
+        <TestConnectionButton configId={config.id} />
       </Section>
 
-      <Section title="Add Keys">
+      <Section title="Add keys">
         <AddKeysForm configId={config.id} />
       </Section>
 
@@ -71,7 +80,7 @@ export default async function ConfigDetailPage({
         <KeysTable keys={keys} configId={config.id} />
       </Section>
 
-      <Section title="cURL Usage">
+      <Section title="cURL usage">
         <CurlExample configId={config.id} masterKey={config.master_key} />
         <p className="text-[#8b8b9e] text-xs">
           Point your app at this URL instead of the real API — KeyProxy swaps in the
@@ -94,7 +103,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-[#111118] border border-[#2a2a38] rounded-xl p-6 flex flex-col gap-4">
+    <div className={cardCls}>
       <h2 className="text-base font-semibold text-white">{title}</h2>
       {children}
     </div>

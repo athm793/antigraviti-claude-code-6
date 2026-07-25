@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
-import { getConfig, updateConfig, deleteConfig, getKeyStats } from "@/lib/db";
-import { isValidHttpUrl } from "@/lib/validation";
+import { updateConfig, deleteConfig, getKeyStats } from "@/lib/db";
+import { authorizeConfig, configAuthResponse } from "@/lib/auth";
+import { checkPublicHttpTarget, normalizeRateLimitCodes } from "@/lib/validation";
 import { checkRateLimit } from "@/lib/rateLimit";
 import type { UpdateConfigInput } from "@/lib/types";
 
@@ -12,10 +13,11 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const config = await getConfig(id);
-    if (!config) return Response.json({ error: "Not found" }, { status: 404 });
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
     const stats = await getKeyStats(id);
-    return Response.json({ ...config, stats });
+    return Response.json({ ...auth.config, stats });
   } catch (err) {
     console.error(err);
     return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
@@ -31,17 +33,31 @@ export async function PATCH(
 
   try {
     const { id } = await params;
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
     const body = (await req.json()) as UpdateConfigInput;
+
     if (body.target_base_url) {
       body.target_base_url = body.target_base_url.replace(/\/$/, "");
-      if (!isValidHttpUrl(body.target_base_url)) {
+      const check = checkPublicHttpTarget(body.target_base_url);
+      if (!check.ok) {
+        return Response.json({ error: check.message }, { status: 400 });
+      }
+    }
+
+    if (body.rate_limit_codes !== undefined) {
+      const codes = normalizeRateLimitCodes(body.rate_limit_codes);
+      if (!codes) {
         return Response.json(
-          { error: "target_base_url must be a valid http(s) URL" },
+          { error: "Rate limit codes must be HTTP status codes between 400 and 599" },
           { status: 400 }
         );
       }
+      body.rate_limit_codes = codes;
     }
-    const updated = await updateConfig(id, body);
+
+    const updated = await updateConfig(id, body, auth.config);
     if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(updated);
   } catch (err) {
@@ -59,6 +75,9 @@ export async function DELETE(
 
   try {
     const { id } = await params;
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
     await deleteConfig(id);
     return new Response(null, { status: 204 });
   } catch (err) {

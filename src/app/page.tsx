@@ -1,25 +1,33 @@
+import { redirect } from "next/navigation";
 import { listConfigs } from "@/lib/db";
+import { getCurrentUser } from "@/lib/auth";
 import { ConfigCard } from "@/components/ConfigCard";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Key, Plus, ArrowRight } from "@/components/ui/Icon";
+import { btnPrimary } from "@/lib/ui";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const configs = await listConfigs();
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+
+  // Scoped to the viewer: admins see everything, everyone else sees the
+  // providers they own.
+  const configs = await listConfigs(user);
 
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex items-center justify-between">
+    <div className="max-w-5xl mx-auto flex flex-col gap-8">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-white">Proxy Configs</h1>
+          <h1 className="text-2xl font-bold text-white">Providers</h1>
           <p className="text-[#8b8b9e] text-sm mt-1">
-            Each config proxies one target API and rotates through its key pool automatically.
+            Each provider proxies one target API and rotates through its key pool automatically.
           </p>
         </div>
-        <a
-          href="/configs/new"
-          className="bg-[#00C4B4] hover:bg-[#00a89a] text-black font-semibold text-sm px-5 rounded-lg transition-colors min-h-[44px] inline-flex items-center"
-        >
-          + New Config
+        <a href="/configs/new" className={`${btnPrimary} gap-1.5 shrink-0`}>
+          <Plus className="w-4 h-4" />
+          New provider
         </a>
       </div>
 
@@ -31,43 +39,27 @@ export default async function HomePage() {
             <span className="text-[#8b8b9e] text-xs hidden group-open:inline">Hide</span>
           </summary>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4 text-left">
-            <Step n={1} title="Create a config">
-              Point KeyProxy at the API you want to call, e.g. <code className="text-[#00C4B4]">https://api.openai.com</code>.
-            </Step>
-            <Step n={2} title="Add API keys">
-              Paste in a pool of keys for that API — one per line. KeyProxy stores them server-side.
-            </Step>
-            <Step n={3} title="Call the proxy">
-              Use the generated master key + proxy URL from your app. KeyProxy rotates keys automatically when one hits a rate limit.
-            </Step>
+            <Steps />
           </div>
         </details>
       )}
 
       {configs.length === 0 ? (
-        <div className="text-center py-16 border border-dashed border-[#2a2a38] rounded-xl px-6">
-          <div className="text-4xl mb-4">🔑</div>
-          <p className="text-[#8b8b9e] mb-8">No proxy configs yet.</p>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto mb-8 text-left">
-            <Step n={1} title="Create a config">
-              Point KeyProxy at the API you want to call, e.g. <code className="text-[#00C4B4]">https://api.openai.com</code>.
-            </Step>
-            <Step n={2} title="Add API keys">
-              Paste in a pool of keys for that API — one per line. KeyProxy stores them server-side.
-            </Step>
-            <Step n={3} title="Call the proxy">
-              Use the generated master key + proxy URL from your app. KeyProxy rotates keys automatically when one hits a rate limit.
-            </Step>
+        <EmptyState
+          icon={<Key className="w-10 h-10" />}
+          title="No providers yet"
+          body="A provider is one upstream API plus the pool of keys KeyProxy rotates through."
+          action={
+            <a href="/configs/new" className={`${btnPrimary} gap-1.5`}>
+              Create your first provider
+              <ArrowRight className="w-4 h-4" />
+            </a>
+          }
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-2xl mx-auto text-left">
+            <Steps />
           </div>
-
-          <a
-            href="/configs/new"
-            className="bg-[#00C4B4] hover:bg-[#00a89a] text-black font-semibold text-sm px-6 py-3 rounded-lg transition-colors inline-flex items-center min-h-[44px]"
-          >
-            Create your first config
-          </a>
-        </div>
+        </EmptyState>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {configs.map((config) => (
@@ -76,6 +68,24 @@ export default async function HomePage() {
         </div>
       )}
     </div>
+  );
+}
+
+function Steps() {
+  return (
+    <>
+      <Step n={1} title="Create a provider">
+        Point KeyProxy at the API you want to call, e.g.{" "}
+        <code className="text-[#00C4B4]">https://api.openai.com</code>.
+      </Step>
+      <Step n={2} title="Add API keys">
+        Paste in a pool of keys for that API — one per line. KeyProxy stores them server-side.
+      </Step>
+      <Step n={3} title="Call the proxy">
+        Use the generated master key + proxy URL from your app. KeyProxy rotates keys
+        automatically when one hits a rate limit.
+      </Step>
+    </>
   );
 }
 

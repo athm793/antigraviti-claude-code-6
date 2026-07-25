@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { Check, X, Spinner } from "./ui/Icon";
+import { btnSecondary } from "@/lib/ui";
 
 type Result = {
   ok: boolean;
@@ -32,16 +34,29 @@ export function TestConnectionButton({ configId }: { configId: string }) {
       <button
         onClick={runTest}
         disabled={testing}
-        className="self-start text-sm bg-[#0a0a10] hover:bg-[#15151f] text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors disabled:opacity-50"
+        className={`${btnSecondary} self-start gap-2 min-w-[10.5rem]`}
       >
-        {testing ? "Testing…" : "Test Connection"}
+        {testing && <Spinner className="w-4 h-4" />}
+        {testing ? "Testing…" : "Test connection"}
       </button>
-      {result && (
-        <p className={`text-sm ${result.ok ? "text-[#00C4B4]" : "text-red-400"}`}>
-          {result.ok ? "✓ " : "✕ "}
-          {result.message}
-        </p>
-      )}
+      {/* Reserved height so the result appearing doesn't push the sections
+          below it down the page. */}
+      <div className="min-h-[20px]">
+        {result && (
+          <p
+            className={`text-sm flex items-start gap-1.5 ${
+              result.ok ? "text-[#00C4B4]" : "text-red-400"
+            }`}
+          >
+            {result.ok ? (
+              <Check className="w-4 h-4 shrink-0 mt-0.5" />
+            ) : (
+              <X className="w-4 h-4 shrink-0 mt-0.5" />
+            )}
+            {result.message}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

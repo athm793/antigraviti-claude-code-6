@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { resetAllKeys, getKeyStats } from "@/lib/db";
+import { authorizeConfig, configAuthResponse } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 type Params = { id: string };
@@ -13,6 +14,9 @@ export async function POST(
 
   try {
     const { id } = await params;
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
     await resetAllKeys(id);
     const stats = await getKeyStats(id);
     return Response.json({ success: true, stats });

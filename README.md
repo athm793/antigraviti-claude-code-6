@@ -1,6 +1,6 @@
 # KeyProxy — API Key Pool Manager & Rotation Proxy
 
-> **Work in progress.** Core proxy, key rotation, and dashboard are production-ready. See [Planned](#planned) for what's coming next.
+> **Work in progress.** Core proxy, key rotation, per-user ownership, and the dashboard are production-ready. Conditional API waterfalls — chaining several different APIs behind one endpoint — are being built on top. See [Planned](#planned).
 
 Stop your outbound campaigns from dying on rate limits. KeyProxy sits between your automation stack and any upstream API — when one key gets throttled, it instantly rotates to the next. Your campaigns keep running.
 
@@ -14,7 +14,7 @@ You're running AI personalization across 5,000 leads. Your OpenAI key hits its r
 
 Or you have three Apollo accounts, two Hunter.io accounts, and no clean way to load-balance requests across all of them without custom code per integration.
 
-KeyProxy gives you a single endpoint per API. Drop in as many keys as you have. It round-robins through active keys, detects rate limits by HTTP status code, cools down exhausted keys automatically, and retries with the next available key — all without touching your campaign setup.
+KeyProxy gives you a single endpoint per API. Drop in as many keys as you have. It works through your active keys in order, detects rate limits by HTTP status code, cools down exhausted keys automatically, and retries with the next available key — all without touching your campaign setup.
 
 ---
 
@@ -32,35 +32,44 @@ https://your-keyproxy.vercel.app/api/proxy/CONFIG_ID/...
         └── Key 4: active   → standby
 ```
 
-One config per upstream API. Unlimited keys per config. Unlimited configs.
+One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 
 ---
 
 ## Features
 
 **Key rotation & rate limit handling**
-- Round-robin rotation across all active keys
-- Configurable rate-limit status codes (default: 429)
+- Sequential rotation — requests use the lowest-numbered active key, and move to the next one only when it hits a rate limit. (Not round-robin: a pool drains in order rather than spreading load. Under heavy concurrency several requests can therefore land on the same key at once.)
+- Configurable rate-limit status codes, restricted to 400–599 (default: 429)
 - Automatic cooldown and recovery — exhausted keys re-activate after a window you set
 - Up to 200 retry attempts per request before returning 503
 - Reset all keys to active instantly from the dashboard
 
 **Dashboard & visibility**
-- Real-time active / exhausted / cooldown counts per config
+- Real-time active / exhausted / cooldown counts per provider
 - Per-key request counts and status
-- Audit log — every rotation, reset, and key change is recorded
-- Debug endpoint (`/api/debug/...`) for inspecting proxy behavior without affecting production
+- Audit log — every rotation, reset, key change, and target-host change is recorded
+- Request inspector (`/api/debug/...`) showing exactly what was sent and received. **Off unless `ENABLE_DEBUG_ROUTE=true`** — it reflects requests back to the caller, so it's a wiring-up tool, not something to leave on in production. All output is scrubbed of key values.
 
 **Key management**
 - Bulk key import — paste a list, duplicates removed automatically
 - Add or remove individual keys without downtime
-- Master key rotation — generate a new UUID for any config without touching your key pool
+- Master key rotation — generate a new UUID for any provider without touching your key pool
 
-**Auth & teams**
+**Auth, teams & isolation**
 - One-time setup screen creates the first admin on fresh deploys — no manual DB seeding
 - HMAC-signed session cookies, 7-day sessions, no server-side session table
 - Multi-user: admins can create accounts, reset passwords, and grant/revoke admin access
 - Always keeps at least one admin — can't lock yourself out
+- **Every provider has an owner.** You see and manage only your own providers; admins see all. A provider you can't access returns 404 rather than 403, so IDs can't be probed.
+- **Upstream API keys never reach the browser.** The dashboard and every API response show a `••••1234` preview; raw key values exist only server-side, on the request path.
+
+**Guardrails**
+- Targets must be publicly reachable — loopback, link-local (including the cloud metadata address), RFC1918, CGNAT and `.internal` hosts are refused on save *and* re-checked at request time, since DNS can be repointed afterwards
+- Credentials in a target URL are rejected; store them as API keys instead
+- Rate-limit codes are restricted to 400–599, so a pool can't be configured to retry its own successes
+- Per-attempt timeout on every upstream call, so a hanging API fails fast instead of consuming the whole function budget
+- Security headers (CSP, HSTS, nosniff, frame-deny) on the dashboard — deliberately *not* applied to `/api/proxy`, which must pass upstream responses through untouched
 
 **Works with any API**
 - Full HTTP passthrough: GET, POST, PUT, PATCH, DELETE
@@ -72,16 +81,25 @@ One config per upstream API. Unlimited keys per config. Unlimited configs.
 
 ## Planned
 
-These are confirmed gaps being actively worked on — not wishlist items:
+**Conditional API waterfalls** — the main line of work. One endpoint, an ordered list of steps, each calling a *different* upstream API, with rules deciding whether a step runs and whether it resolved the request. Try Prospeo, and if it returns no email try BetterEnrich, then Hunter — one URL, one response shape whichever provider answers, plus a per-provider hit rate telling you which vendor is actually earning its keep.
+
+- [x] Per-user ownership and key redaction
+- [x] Shared rotation engine with per-attempt timeouts
+- [ ] Endpoint + version schema, hashed endpoint keys
+- [ ] Template and condition engine (no `eval`; JSON rule trees)
+- [ ] Visual step builder, plus a JSON view for copy/paste and versioning
+- [ ] Public execution endpoint, run logs and per-provider hit rates
+- [ ] Result caching keyed on owner + endpoint + version + input
+- [ ] Opt-in parallel fan-out with declared-order merging
+
+Smaller gaps still open:
 
 - [ ] Webhook notification when all keys in a pool are simultaneously exhausted
-- [ ] Per-key usage analytics with time-series charts
 - [ ] CSV key import
-- [ ] Per-config request logs with filtering and pagination
 - [ ] Sentry / error monitoring integration
 - [ ] `.env.example` file for easier self-hosting
 - [ ] Structured logging in auth and proxy handlers
-- [ ] Extract shared form styles to a single module (current duplication across 5 components)
+- [ ] Session revocation — a token for a deleted user still passes the middleware gate for up to 7 days, because middleware never touches the database
 
 ---
 
@@ -147,9 +165,9 @@ curl https://your-keyproxy.vercel.app/api/proxy/CONFIG_ID/v1/models \
 
 ## Agency setup guide
 
-**One config = one upstream API.** Here's a typical agency setup:
+**One provider = one upstream API.** Here's a typical agency setup:
 
-| Config name | Target URL | Keys in pool |
+| Provider name | Target URL | Keys in pool |
 |---|---|---|
 | OpenAI - Personalization | `https://api.openai.com` | 8 keys across 4 accounts |
 | Hunter.io - Email Finder | `https://api.hunter.io` | 3 team keys |
@@ -165,6 +183,8 @@ Point every tool in your stack at the matching KeyProxy endpoint. Add more keys 
 |---|---|---|
 | `DATABASE_URL` | Yes | Neon PostgreSQL connection string |
 | `SESSION_SECRET` | Yes | 32+ byte random hex string for signing session cookies. Rotating this logs everyone out. |
+| `ENABLE_DEBUG_ROUTE` | No | Set to `true` to enable `/api/debug/...`. Off by default — the route reflects requests and responses back to the caller. |
+| `PROXY_ATTEMPT_TIMEOUT_MS` | No | Per-attempt upstream timeout. Defaults to `30000`. Raise it if a provider is legitimately slow. |
 
 ---
 
@@ -178,9 +198,10 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 
 | Method | Route | Description |
 |---|---|---|
-| GET / POST | `/api/configs` | List or create proxy configs |
-| GET / PATCH / DELETE | `/api/configs/[id]` | Get, update, or delete a config |
-| POST | `/api/configs/[id]/keys` | Add keys to a config |
+| GET / POST | `/api/configs` | List (scoped to the caller) or create providers |
+| GET / PATCH / DELETE | `/api/configs/[id]` | Get, update, or delete a provider |
+| GET | `/api/configs/[id]/keys` | List keys — **previews only**, never raw values |
+| POST | `/api/configs/[id]/keys` | Add keys to a provider |
 | DELETE | `/api/configs/[id]/keys/[keyId]` | Remove a specific key |
 | POST | `/api/configs/[id]/reset` | Reset all keys to active |
 | POST | `/api/configs/[id]/rotate-key` | Rotate the config's master key |
@@ -213,7 +234,9 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 
 ## Database schema
 
-**proxy_configs** — `id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes[], cooldown_minutes, master_key, created_at`
+**proxy_configs** — `id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes[], cooldown_minutes, master_key, owner_user_id, created_at`
+
+On first run after upgrading, `owner_user_id` is added and any existing providers are adopted by the oldest admin account, so nobody is locked out of their own key pools.
 
 **api_keys** — `id, config_id, key_value, order_index, status (active|exhausted|cooldown), exhausted_at, request_count, created_at`
 
@@ -255,14 +278,23 @@ src/
 │   ├── SetupForm.tsx
 │   ├── UserMenu.tsx
 │   └── UsersManager.tsx
+│   └── ui/                                   # Shared primitives: Select, Field,
+│                                             #   Icon, Toggle, Tabs, Pagination,
+│                                             #   StatTile, CodeBlock, Skeleton…
 └── lib/
     ├── db.ts                                 # Neon DB + schema init
     ├── usersDb.ts                            # User CRUD
-    ├── auth.ts                               # Session cookie helpers
+    ├── auth.ts                               # Session cookies + authorizeConfig
     ├── sessionToken.ts                       # Edge-safe HMAC tokens
     ├── passwords.ts                          # scrypt hashing
-    ├── proxy.ts                              # Key rotation + forwarding
+    ├── rotation.ts                           # Key-rotation engine
+    ├── proxy.ts                              # Pass-through adapter over rotation
+    ├── validation.ts                         # URL/egress guards
+    ├── redact.ts                             # Secret scrubbing
+    ├── ui.ts                                 # Shared class strings
     └── types.ts                              # TypeScript interfaces
 ```
 
-**Rotation logic:** pick lowest `order_index` active key → forward request → if response code is in `rate_limit_codes`, mark exhausted, schedule cooldown recovery, retry with next key → return 503 only if all keys are simultaneously exhausted.
+**Rotation logic:** pick lowest `order_index` active key → forward request → if the response code is in `rate_limit_codes`, mark that key exhausted, exclude it for the rest of this request, and retry with the next → return 503 only when every key is simultaneously exhausted. Each attempt has its own timeout, and the whole loop respects an optional deadline.
+
+`rotation.ts` returns the upstream response **unconsumed** along with which key was used, how many attempts it took, and how many keys were burned. That is what lets the pass-through proxy stream the body straight back while the (in-progress) waterfall executor reads and inspects it.

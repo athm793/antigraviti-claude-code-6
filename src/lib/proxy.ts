@@ -1,54 +1,19 @@
-import type { ProxyConfig, ApiKey } from "./types";
+import type { ProxyConfig } from "./types";
 import {
-  getActiveKey,
-  markKeyExhausted,
-  incrementRequestCount,
-  resetCooldownKeys,
-} from "./db";
+  executeWithRotation,
+  recoverCooldownKeys,
+  sanitizeResponseHeaders,
+} from "./rotation";
 
-const MAX_ROTATION_ATTEMPTS = 200;
-
-const HOP_BY_HOP_REQUEST = new Set([
-  "host",
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailers",
-  "transfer-encoding",
-  "upgrade",
-  "content-length",
-  "accept-encoding",
-  "x-master-key",
-  // Vercel infrastructure headers — must not reach the target API
-  "forwarded",
-  "x-real-ip",
-  "x-invocation-id",
-  "x-matched-path",
-  "x-vercel-sc-basepath",
-  "x-vercel-sc-headers",
-  "x-vercel-sc-host",
-]);
-
-function isInfraHeader(name: string): boolean {
-  return (
-    name.startsWith("x-vercel-") ||
-    name.startsWith("x-forwarded-")
-  );
-}
-
-const HOP_BY_HOP_RESPONSE = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "te",
-  "trailers",
-  "transfer-encoding",
-  "upgrade",
-]);
-
+/**
+ * Pass-through proxy.
+ *
+ * A thin adapter over the shared rotation engine in rotation.ts. The response
+ * body is streamed straight through and never read here — that is what keeps
+ * an arbitrarily large upstream response cheap, and it's the property the
+ * waterfall executor deliberately gives up in exchange for being able to
+ * inspect the body.
+ */
 export async function handleProxyRequest(
   config: ProxyConfig,
   path: string,
@@ -57,103 +22,53 @@ export async function handleProxyRequest(
   incomingHeaders: Headers,
   body: ArrayBuffer | null
 ): Promise<Response> {
-  const rateLimitCodes = new Set(config.rate_limit_codes);
+  await recoverCooldownKeys(config);
 
-  if (config.cooldown_minutes > 0) {
-    await resetCooldownKeys(config.id, config.cooldown_minutes);
+  const result = await executeWithRotation(config, {
+    path,
+    queryString,
+    method,
+    headers: incomingHeaders,
+    body,
+  });
+
+  if (result.ok && result.response) {
+    return new Response(result.response.body, {
+      status: result.response.status,
+      headers: sanitizeResponseHeaders(result.response.headers),
+    });
   }
 
-  for (let attempt = 0; attempt < MAX_ROTATION_ATTEMPTS; attempt++) {
-    const key = await getActiveKey(config.id);
-    if (!key) {
+  switch (result.error?.kind) {
+    case "no_keys":
       return Response.json(
         { error: "All API keys exhausted", proxy: true },
         { status: 503 }
       );
-    }
-
-    const targetUrl = buildTargetUrl(
-      config.target_base_url,
-      path,
-      queryString
-    );
-    const forwardHeaders = buildForwardHeaders(config, key, incomingHeaders);
-
-    let upstream: Response;
-    try {
-      upstream = await fetch(targetUrl, {
-        method,
-        headers: forwardHeaders,
-        body: body && body.byteLength > 0 ? body : undefined,
-        redirect: "manual",
-        cache: "no-store",
-      });
-    } catch (err) {
+    case "all_exhausted":
       return Response.json(
-        { error: "Upstream fetch failed", detail: String(err), proxy: true },
+        { error: "All API keys exhausted after rotation", proxy: true },
+        { status: 503 }
+      );
+    case "blocked_target":
+      return Response.json(
+        { error: "Request blocked", detail: result.error.detail, proxy: true },
+        { status: 400 }
+      );
+    case "timeout":
+      return Response.json(
+        { error: "Upstream timed out", proxy: true },
+        { status: 504 }
+      );
+    default:
+      // Deliberately generic: the old message interpolated the raw fetch error,
+      // which leaked the target hostname (and any userinfo in it) to whoever
+      // held the master key.
+      return Response.json(
+        { error: "Upstream fetch failed", proxy: true },
         { status: 502 }
       );
-    }
-
-    if (rateLimitCodes.has(upstream.status)) {
-      await markKeyExhausted(key.id, config.cooldown_minutes);
-      continue;
-    }
-
-    await incrementRequestCount(key.id);
-
-    const responseHeaders = sanitizeResponseHeaders(upstream.headers);
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: responseHeaders,
-    });
   }
-
-  return Response.json(
-    { error: "All API keys exhausted after rotation", proxy: true },
-    { status: 503 }
-  );
-}
-
-function buildTargetUrl(
-  baseUrl: string,
-  path: string,
-  queryString: string
-): string {
-  const base = baseUrl.replace(/\/$/, "");
-  return `${base}${path}${queryString}`;
-}
-
-function buildForwardHeaders(
-  config: ProxyConfig,
-  key: ApiKey,
-  incoming: Headers
-): Headers {
-  const out = new Headers();
-
-  for (const [name, value] of incoming.entries()) {
-    const lower = name.toLowerCase();
-    if (HOP_BY_HOP_REQUEST.has(lower)) continue;
-    if (isInfraHeader(lower)) continue;
-    if (lower === "authorization") continue;
-    out.set(name, value);
-  }
-
-  out.set(
-    config.auth_header_name,
-    `${config.auth_header_prefix}${key.key_value}`
-  );
-
-  return out;
-}
-
-function sanitizeResponseHeaders(incoming: Headers): Headers {
-  const out = new Headers();
-  for (const [name, value] of incoming.entries()) {
-    if (HOP_BY_HOP_RESPONSE.has(name.toLowerCase())) continue;
-    out.set(name, value);
-  }
-  return out;
 }
 
 export function extractMasterKey(headers: Headers): string | null {

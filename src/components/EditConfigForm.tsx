@@ -1,8 +1,18 @@
 "use client";
 
-import { useState, useId, cloneElement, isValidElement } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ProxyConfig } from "@/lib/types";
+import { Field } from "./ui/Field";
+import { Spinner } from "./ui/Icon";
+import {
+  btnGhostBrand,
+  btnPrimary,
+  cardCls,
+  errorBoxCls,
+  inputCls,
+  metaLabelCls,
+} from "@/lib/ui";
 
 export function EditConfigForm({ config }: { config: ProxyConfig }) {
   const router = useRouter();
@@ -64,15 +74,12 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
   }
 
   return (
-    <div className="bg-[#111118] border border-[#2a2a38] rounded-xl p-6 flex flex-col gap-4">
-      <div className="flex items-center justify-between">
+    <div className={cardCls}>
+      <div className="flex items-center justify-between gap-3">
         <h2 className="text-base font-semibold text-white">Settings</h2>
         {!editing && (
-          <button
-            onClick={() => setEditing(true)}
-            className="bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors"
-          >
-            Edit Settings
+          <button onClick={() => setEditing(true)} className={btnGhostBrand}>
+            Edit settings
           </button>
         )}
       </div>
@@ -80,7 +87,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
       {!editing ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="flex flex-col gap-1">
-            <div className="text-[#8b8b9e] text-xs font-medium uppercase tracking-wide">Auth Header</div>
+            <div className={metaLabelCls}>Auth header</div>
             <code className="text-[#c8c8d8] text-sm">
               {config.auth_header_name}:{" "}
               <span className="text-[#00C4B4]">{config.auth_header_prefix}</span>
@@ -88,7 +95,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
             </code>
           </div>
           <div className="flex flex-col gap-1">
-            <div className="text-[#8b8b9e] text-xs font-medium uppercase tracking-wide">Rate Limit Codes</div>
+            <div className={metaLabelCls}>Rate limit codes</div>
             <div className="flex gap-1.5 flex-wrap">
               {config.rate_limit_codes.map((code) => (
                 <span
@@ -101,7 +108,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
             </div>
           </div>
           <div className="flex flex-col gap-1">
-            <div className="text-[#8b8b9e] text-xs font-medium uppercase tracking-wide">Cooldown</div>
+            <div className={metaLabelCls}>Cooldown</div>
             <div className="text-[#c8c8d8] text-sm">
               {config.cooldown_minutes === 0
                 ? "Skip forever (no retry)"
@@ -112,37 +119,74 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
       ) : (
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Config Name" hint="A name to help you recognize this config">
-              <input required value={form.name} onChange={(e) => set("name", e.target.value)} className={inputCls} />
+            <Field label="Provider name" hint="A name to help you recognise this provider">
+              <input
+                required
+                value={form.name}
+                onChange={(e) => set("name", e.target.value)}
+                className={inputCls}
+              />
             </Field>
-            <Field label="Target Base URL" hint="The API's base URL — no trailing slash">
-              <input required type="url" pattern="https?://.+" value={form.target_base_url} onChange={(e) => set("target_base_url", e.target.value)} className={inputCls} />
+            <Field label="Target base URL" hint="The API's base URL — no trailing slash">
+              <input
+                required
+                type="url"
+                pattern="https?://.+"
+                value={form.target_base_url}
+                onChange={(e) => set("target_base_url", e.target.value)}
+                className={inputCls}
+              />
             </Field>
-            <Field label="Auth Header Name" hint="Header to inject the key into">
-              <input required value={form.auth_header_name} onChange={(e) => set("auth_header_name", e.target.value)} className={inputCls} />
+            <Field label="Auth header name" hint="Header to inject the key into">
+              <input
+                required
+                value={form.auth_header_name}
+                onChange={(e) => set("auth_header_name", e.target.value)}
+                className={inputCls}
+              />
             </Field>
-            <Field label="Auth Header Prefix" hint='Include trailing space (e.g. "Bearer ")'>
-              <input value={form.auth_header_prefix} onChange={(e) => set("auth_header_prefix", e.target.value)} className={`${inputCls} font-mono`} />
+            <Field label="Auth header prefix" hint='Include trailing space (e.g. "Bearer ")'>
+              <input
+                value={form.auth_header_prefix}
+                onChange={(e) => set("auth_header_prefix", e.target.value)}
+                className={`${inputCls} font-mono`}
+              />
             </Field>
-            <Field label="Rate Limit Status Codes" hint="Comma-separated codes that trigger rotation">
-              <input value={form.rate_limit_codes} onChange={(e) => set("rate_limit_codes", e.target.value)} placeholder="429, 503" className={inputCls} />
+            <Field
+              label="Rate limit status codes"
+              hint="Comma-separated 4xx/5xx codes that trigger rotation"
+            >
+              <input
+                value={form.rate_limit_codes}
+                onChange={(e) => set("rate_limit_codes", e.target.value)}
+                placeholder="429, 503"
+                className={inputCls}
+              />
             </Field>
-            <Field label="Cooldown Minutes" hint="0 = skip exhausted keys forever; >0 = retry after N minutes">
-              <input type="number" min="0" value={form.cooldown_minutes} onChange={(e) => set("cooldown_minutes", e.target.value)} className={inputCls} />
+            <Field
+              label="Cooldown minutes"
+              hint="0 = skip exhausted keys forever; above 0 = retry after N minutes"
+            >
+              <input
+                type="number"
+                min="0"
+                value={form.cooldown_minutes}
+                onChange={(e) => set("cooldown_minutes", e.target.value)}
+                className={inputCls}
+              />
             </Field>
           </div>
 
-          {error && (
-            <p className="text-red-400 text-sm bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2">{error}</p>
-          )}
+          {error && <p className={errorBoxCls}>{error}</p>}
 
           <div className="flex gap-3">
             <button
               type="submit"
               disabled={saving}
-              className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors"
+              className={`${btnPrimary} gap-2 min-w-[9rem]`}
             >
-              {saving ? "Saving…" : "Save Changes"}
+              {saving && <Spinner className="w-4 h-4" />}
+              {saving ? "Saving…" : "Save changes"}
             </button>
             <button
               type="button"
@@ -154,31 +198,6 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
           </div>
         </form>
       )}
-    </div>
-  );
-}
-
-const inputCls =
-  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 min-h-[44px] text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";
-
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  const id = useId();
-  const child = isValidElement(children)
-    ? cloneElement(children as React.ReactElement<{ id?: string }>, { id })
-    : children;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-sm font-medium text-[#c8c8d8]">{label}</label>
-      {child}
-      {hint && <p className="text-xs text-[#8b8b9e]">{hint}</p>}
     </div>
   );
 }

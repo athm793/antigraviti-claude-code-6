@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Spinner } from "./ui/Icon";
+import { btnPrimary, labelCls, textareaCls } from "@/lib/ui";
 
 export function AddKeysForm({ configId }: { configId: string }) {
   const router = useRouter();
@@ -12,7 +14,6 @@ export function AddKeysForm({ configId }: { configId: string }) {
     inserted: number;
     skipped: number;
   } | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const keyCount = value
     .split("\n")
@@ -56,33 +57,40 @@ export function AddKeysForm({ configId }: { configId: string }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-      <label htmlFor="add-keys-textarea" className="text-sm font-medium text-[#c8c8d8]">
+      <label htmlFor="add-keys-textarea" className={labelCls}>
         API keys (one per line)
       </label>
       <textarea
         id="add-keys-textarea"
-        ref={textareaRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder={"Paste your API keys here, one per line:\nsk-abc123...\nsk-def456...\nsk-ghi789..."}
         rows={6}
-        className="w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-3 text-sm font-mono text-[#c8c8d8] placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 resize-y"
+        spellCheck={false}
+        className={textareaCls}
       />
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex items-center gap-4 flex-wrap min-h-[44px]">
         <button
           type="submit"
           disabled={loading || keyCount === 0}
-          className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-40 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 py-2 rounded-lg transition-colors min-h-[44px]"
+          // Fixed width: the label goes "Add keys" -> "Add 12 keys" -> "Adding…"
+          // as you type, and an unpinned button would resize on every keystroke.
+          className={`${btnPrimary} gap-2 min-w-[10rem]`}
         >
-          {loading ? "Adding…" : keyCount > 0 ? `Add ${keyCount} Key${keyCount !== 1 ? "s" : ""}` : "Add Keys"}
+          {loading && <Spinner className="w-4 h-4" />}
+          {loading
+            ? "Adding…"
+            : keyCount > 0
+              ? `Add ${keyCount} key${keyCount !== 1 ? "s" : ""}`
+              : "Add keys"}
         </button>
         {keyCount > 0 && !loading && (
-          <span className="text-[#8b8b9e] text-sm">
+          <span className="text-[#8b8b9e] text-sm tabular-nums">
             {keyCount} key{keyCount !== 1 ? "s" : ""} detected
           </span>
         )}
         {result && (
-          <span className="text-sm">
+          <span className="text-sm tabular-nums">
             <span className="text-[#00C4B4]">{result.inserted} added</span>
             {result.skipped > 0 && (
               <span className="text-[#8b8b9e]"> · {result.skipped} skipped (duplicates)</span>

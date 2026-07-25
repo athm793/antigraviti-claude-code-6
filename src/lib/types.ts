@@ -9,9 +9,14 @@ export interface ProxyConfig {
   rate_limit_codes: number[];
   cooldown_minutes: number;
   master_key: string;
+  owner_user_id: string | null;
   created_at: string;
 }
 
+/**
+ * The full row, including the upstream secret. Server-side only — the proxy
+ * and rotation layer need `key_value`, nothing else does.
+ */
 export interface ApiKey {
   id: number;
   config_id: string;
@@ -22,6 +27,15 @@ export interface ApiKey {
   request_count: number;
   created_at: string;
 }
+
+/**
+ * What the dashboard and every API response get: identical to ApiKey but with
+ * the secret replaced by a display-only preview. Upstream keys are the asset
+ * this product exists to protect, and the browser has never needed their
+ * values — the old UI fetched them in full and masked them in JavaScript,
+ * which left them readable in devtools.
+ */
+export type ApiKeyView = Omit<ApiKey, "key_value"> & { key_preview: string };
 
 export interface KeyStats {
   total: number;

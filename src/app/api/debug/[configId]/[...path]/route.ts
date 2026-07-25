@@ -1,98 +1,133 @@
 import { type NextRequest } from "next/server";
-import { getConfigByMasterKey, getActiveKey } from "@/lib/db";
+import { getConfigByMasterKey, listKeys } from "@/lib/db";
 import { extractMasterKey } from "@/lib/proxy";
+import { executeWithRotation, filterForwardableHeaders } from "@/lib/rotation";
+import { createScrubber, scrubValue, maskSecret, truncate } from "@/lib/redact";
+import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 type Params = { configId: string; path: string[] };
 
-const STRIP = new Set([
-  "host", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
-  "te", "trailers", "transfer-encoding", "upgrade", "content-length",
-  "accept-encoding", "x-master-key", "authorization", "forwarded",
-  "x-real-ip", "x-invocation-id", "x-matched-path",
-  "x-vercel-sc-basepath", "x-vercel-sc-headers", "x-vercel-sc-host",
-]);
+const MAX_BODY_PREVIEW = 4000;
 
-function isInfra(name: string) {
-  return name.startsWith("x-vercel-") || name.startsWith("x-forwarded-");
+/**
+ * Request inspector.
+ *
+ * Fail-closed behind ENABLE_DEBUG_ROUTE. This endpoint reflects the outbound
+ * request and the upstream response back to whoever holds the master key,
+ * which is exactly the shape of an SSRF-with-reflection primitive — useful
+ * while wiring up a provider, not something to leave switched on in
+ * production. Everything it returns is run through the secret scrubber, and
+ * the injected credential is masked rather than previewed.
+ */
+function debugEnabled(): boolean {
+  return process.env.ENABLE_DEBUG_ROUTE === "true";
 }
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<Params> }
 ) {
-  const { configId, path } = await params;
-
-  const masterKey = extractMasterKey(req.headers);
-  if (!masterKey) return Response.json({ error: "Missing master key" }, { status: 401 });
-
-  const config = await getConfigByMasterKey(masterKey);
-  if (!config || config.id !== configId) return Response.json({ error: "Invalid master key" }, { status: 403 });
-
-  const key = await getActiveKey(config.id);
-
-  const pathStr = "/" + path.join("/");
-  const targetUrl = config.target_base_url.replace(/\/$/, "") + pathStr + req.nextUrl.search;
-
-  const bodyBuffer = await req.arrayBuffer();
-  const bodyText = new TextDecoder().decode(bodyBuffer);
-
-  // Build headers exactly as the real proxy does
-  const forwardHeaders = new Headers();
-  const sentHeaders: Record<string, string> = {};
-  const skippedHeaders: string[] = [];
-
-  for (const [name, value] of req.headers.entries()) {
-    const lower = name.toLowerCase();
-    if (STRIP.has(lower) || isInfra(lower)) { skippedHeaders.push(name); continue; }
-    if (lower === "authorization") { skippedHeaders.push(name); continue; }
-    forwardHeaders.set(name, value);
-    sentHeaders[name] = value;
+  if (!debugEnabled()) {
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (key) {
-    const authValue = `${config.auth_header_prefix}${key.key_value}`;
-    forwardHeaders.set(config.auth_header_name, authValue);
-    sentHeaders[config.auth_header_name] = `${config.auth_header_prefix}${key.key_value.slice(0, 6)}...`;
-  }
-
-  // Actually make the request
-  let responseStatus: number;
-  const responseHeaders: Record<string, string> = {};
-  let responseBody: string;
+  const limited = checkRateLimit(req, "debug:request", 20);
+  if (limited) return limited;
 
   try {
-    const upstream = await fetch(targetUrl, {
+    const { configId, path } = await params;
+
+    const masterKey = extractMasterKey(req.headers);
+    if (!masterKey) {
+      return Response.json({ error: "Missing master key" }, { status: 401 });
+    }
+
+    const config = await getConfigByMasterKey(masterKey);
+    if (!config || config.id !== configId) {
+      return Response.json({ error: "Invalid master key" }, { status: 403 });
+    }
+
+    const bodyBuffer = await req.arrayBuffer();
+    const pathStr = `/${path.join("/")}`;
+
+    const result = await executeWithRotation(config, {
+      path: pathStr,
+      queryString: req.nextUrl.search,
       method: "POST",
-      headers: forwardHeaders,
-      body: bodyBuffer.byteLength > 0 ? bodyBuffer : undefined,
-      redirect: "manual",
-      cache: "no-store",
+      headers: req.headers,
+      body: bodyBuffer,
+      // One attempt only: this is an inspector, not a request that should
+      // chew through the pool. It also means a rate-limit response is shown
+      // to the caller instead of being silently rotated past.
+      maxAttempts: 1,
+      verifyTarget: true,
+      timeoutMs: 10_000,
     });
 
-    responseStatus = upstream.status;
-    upstream.headers.forEach((v, k) => { responseHeaders[k] = v; });
-    responseBody = await upstream.text();
-  } catch (err) {
-    responseStatus = 0;
-    responseBody = String(err);
-  }
+    // Scrub against every key in the pool, not just the one used — an upstream
+    // error can quote a different key than the one that made the call.
+    const pool = await listKeys(config.id);
+    const scrub = createScrubber([
+      ...pool.map((k) => k.key_value),
+      config.master_key,
+    ]);
 
-  return Response.json({
-    sent: {
-      url: targetUrl,
-      method: "POST",
-      headers: sentHeaders,
-      skipped_headers: skippedHeaders,
-      body_bytes: bodyBuffer.byteLength,
-      body: bodyText,
-    },
-    received: {
-      status: responseStatus,
-      headers: responseHeaders,
-      body: responseBody.slice(0, 1000),
-    },
-    key_used: key ? `${key.key_value.slice(0, 6)}... (order #${key.order_index})` : "NO ACTIVE KEY",
-  });
+    const sentHeaders: Record<string, string> = {};
+    for (const [name, value] of filterForwardableHeaders(req.headers).entries()) {
+      sentHeaders[name] = value;
+    }
+    // The auth header is set by the rotation layer; show that it was set and
+    // which key, never the value.
+    const usedKey = pool.find((k) => k.id === result.keyId);
+    sentHeaders[config.auth_header_name] = usedKey
+      ? `${config.auth_header_prefix}${maskSecret(usedKey.key_value)}`
+      : "(no active key)";
+
+    let received: Record<string, unknown> = {
+      status: null,
+      headers: {},
+      body: null,
+    };
+
+    if (result.ok && result.response) {
+      const headers: Record<string, string> = {};
+      result.response.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+      const raw = await result.response.text();
+      const { text, truncated } = truncate(raw, MAX_BODY_PREVIEW);
+      received = {
+        status: result.response.status,
+        headers,
+        body: text,
+        body_truncated: truncated,
+      };
+    }
+
+    const payload = {
+      sent: {
+        url: result.url,
+        method: "POST",
+        headers: sentHeaders,
+        body_bytes: bodyBuffer.byteLength,
+        body: truncate(new TextDecoder().decode(bodyBuffer), MAX_BODY_PREVIEW).text,
+      },
+      received,
+      rotation: {
+        attempts: result.attempts,
+        keys_exhausted: result.keysExhausted,
+        key_order_index: result.keyOrderIndex,
+        latency_ms: result.latencyMs,
+        error: result.error,
+      },
+    };
+
+    return Response.json(scrubValue(payload, scrub));
+  } catch (err) {
+    console.error(err);
+    return Response.json({ error: "Something went wrong. Please try again." }, { status: 500 });
+  }
 }

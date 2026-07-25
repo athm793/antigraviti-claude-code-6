@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { inputCls } from "@/lib/ui";
 
 export function SetupForm() {
   const router = useRouter();
@@ -132,5 +133,3 @@ export function SetupForm() {
   );
 }
 
-const inputCls =
-  "w-full bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2.5 min-h-[44px] text-sm text-white placeholder-[#4a4a58] focus:outline-none focus:border-[#00C4B4]/40 transition-colors";

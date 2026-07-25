@@ -36,11 +36,16 @@ export default async function RootLayout({
             </div>
             <span className="font-semibold text-white">KeyProxy</span>
           </a>
-          <span className="text-[#2a2a38] hidden sm:inline">|</span>
-          <span className="text-[#8b8b9e] text-sm hidden sm:inline">API Key Rotation Proxy</span>
+          <span className="text-[#2a2a38] hidden lg:inline">|</span>
+          <span className="text-[#8b8b9e] text-sm hidden lg:inline">API Key Rotation Proxy</span>
           <UserMenu user={user} />
         </header>
-        <main className="px-6 py-8 max-w-5xl mx-auto">{children}</main>
+        {/*
+          The width clamp lives on each page root, not here: the waterfall
+          builder needs the full viewport for its step list plus side rail,
+          while the list pages stay readable at max-w-5xl.
+        */}
+        <main className="px-6 py-8">{children}</main>
       </body>
     </html>
   );

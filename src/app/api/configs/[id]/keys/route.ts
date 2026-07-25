@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
-import { listKeys, insertKeys } from "@/lib/db";
+import { listKeyViews, insertKeys } from "@/lib/db";
+import { authorizeConfig, configAuthResponse } from "@/lib/auth";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 type Params = { id: string };
@@ -10,7 +11,11 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const keys = await listKeys(id);
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
+    // Previews only — the raw upstream secrets never leave the server.
+    const keys = await listKeyViews(id);
     return Response.json(keys);
   } catch (err) {
     console.error(err);
@@ -27,6 +32,9 @@ export async function POST(
 
   try {
     const { id } = await params;
+    const auth = await authorizeConfig(id);
+    if (!auth.ok) return configAuthResponse(auth.status);
+
     const body = (await req.json()) as { keys: unknown };
 
     if (!Array.isArray(body.keys)) {

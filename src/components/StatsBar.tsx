@@ -4,6 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { KeyStats } from "@/lib/types";
 import { ConfirmModal } from "./ConfirmModal";
+import { Spinner } from "./ui/Icon";
+import { btnSecondary } from "@/lib/ui";
 
 export function StatsBar({
   stats,
@@ -16,6 +18,8 @@ export function StatsBar({
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
+
+  const canReset = stats.exhausted > 0 || stats.cooldown > 0;
 
   async function handleReset() {
     setConfirmOpen(false);
@@ -33,23 +37,35 @@ export function StatsBar({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-4">
-      <div className="flex gap-3 flex-1 min-w-0">
-        <Stat label="Active" value={stats.active} color="text-[#00C4B4]" />
-        <Stat label="Exhausted" value={stats.exhausted} color="text-red-400" />
-        <Stat label="Cooldown" value={stats.cooldown} color="text-amber-400" />
-        <Stat label="Total" value={stats.total} color="text-[#8b8b9e]" />
-      </div>
-      {error && <p className="text-red-400 text-xs">{error}</p>}
-      {(stats.exhausted > 0 || stats.cooldown > 0) && (
+    <div className="flex flex-col gap-2">
+      {/*
+        No flex-1 on the stats group: stretching it pinned the reset button to
+        the far right with a few hundred pixels of nothing in between. The
+        controls belong together at their natural width.
+      */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex gap-3 flex-wrap">
+          <Stat label="Active" value={stats.active} color="text-[#00C4B4]" />
+          <Stat label="Exhausted" value={stats.exhausted} color="text-red-400" />
+          <Stat label="Cooldown" value={stats.cooldown} color="text-amber-400" />
+          <Stat label="Total" value={stats.total} color="text-[#8b8b9e]" />
+        </div>
+        {/*
+          Rendered always, disabled when there's nothing to reset. It used to
+          mount and unmount with key state, which shifted the whole row the
+          moment a key hit a rate limit.
+        */}
         <button
           onClick={() => setConfirmOpen(true)}
-          disabled={resetting}
-          className="text-sm text-[#8b8b9e] hover:text-white border border-[#2a2a38] hover:border-[#363650] px-4 py-1.5 rounded-lg transition-colors disabled:opacity-50 min-h-[44px]"
+          disabled={resetting || !canReset}
+          title={canReset ? undefined : "No exhausted or cooldown keys to reset"}
+          className={`${btnSecondary} gap-2 w-[9.5rem] shrink-0`}
         >
-          {resetting ? "Resetting…" : "Reset All Keys"}
+          {resetting && <Spinner className="w-4 h-4" />}
+          {resetting ? "Resetting…" : "Reset all keys"}
         </button>
-      )}
+      </div>
+      <p className="text-red-400 text-xs min-h-[16px]">{error}</p>
 
       <ConfirmModal
         open={confirmOpen}
@@ -74,7 +90,7 @@ function Stat({
 }) {
   return (
     <div className="bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-2 text-center min-w-[70px]">
-      <div className={`${color} font-bold text-lg`}>{value}</div>
+      <div className={`${color} font-bold text-lg tabular-nums`}>{value}</div>
       <div className="text-[#8b8b9e] text-xs">{label}</div>
     </div>
   );

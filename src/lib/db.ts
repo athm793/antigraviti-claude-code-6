@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import type {
   ProxyConfig,
   ApiKey,
+  ApiKeyView,
   KeyStats,
   ConfigWithStats,
   CreateConfigInput,
@@ -25,6 +26,18 @@ let schemaInitialized = false;
 export async function initSchema(): Promise<void> {
   if (schemaInitialized) return;
   const sql = getSQL();
+  // users is created first because proxy_configs.owner_user_id references it.
+  await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id            TEXT        PRIMARY KEY,
+      email         TEXT        UNIQUE NOT NULL,
+      password_hash TEXT        NOT NULL,
+      name          TEXT        NOT NULL DEFAULT '',
+      is_admin      BOOLEAN     NOT NULL DEFAULT false,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
   await sql`
     CREATE TABLE IF NOT EXISTS proxy_configs (
       id               TEXT        PRIMARY KEY,
@@ -35,6 +48,7 @@ export async function initSchema(): Promise<void> {
       rate_limit_codes INTEGER[]   NOT NULL DEFAULT '{429}',
       cooldown_minutes INTEGER     NOT NULL DEFAULT 0,
       master_key       TEXT        NOT NULL UNIQUE,
+      owner_user_id    TEXT        REFERENCES users(id) ON DELETE SET NULL,
       created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
@@ -62,17 +76,19 @@ export async function initSchema(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_audit_log_config_created ON audit_log(config_id, created_at DESC)`;
+
+  // Migration for deployments created before configs had owners. Existing
+  // configs are adopted by the oldest admin so nobody is locked out of their
+  // own key pools; new configs get an owner at creation time.
+  await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL`;
   await sql`
-    CREATE TABLE IF NOT EXISTS users (
-      id            TEXT        PRIMARY KEY,
-      email         TEXT        UNIQUE NOT NULL,
-      password_hash TEXT        NOT NULL,
-      name          TEXT        NOT NULL DEFAULT '',
-      is_admin      BOOLEAN     NOT NULL DEFAULT false,
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    UPDATE proxy_configs SET owner_user_id = (
+      SELECT id FROM users WHERE is_admin = true ORDER BY created_at ASC LIMIT 1
     )
+    WHERE owner_user_id IS NULL
   `;
+  await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_owner ON proxy_configs(owner_user_id)`;
+
   schemaInitialized = true;
 }
 
@@ -90,6 +106,7 @@ function rowToConfig(row: Record<string, unknown>): ProxyConfig {
     rate_limit_codes: row.rate_limit_codes as number[],
     cooldown_minutes: row.cooldown_minutes as number,
     master_key: row.master_key as string,
+    owner_user_id: (row.owner_user_id as string | null) ?? null,
     created_at: toISOString(row.created_at),
   };
 }
@@ -117,7 +134,7 @@ function rowToAuditEntry(row: Record<string, unknown>): AuditLogEntry {
   };
 }
 
-async function logAudit(configId: string, action: string, detail?: string): Promise<void> {
+export async function logAudit(configId: string, action: string, detail?: string): Promise<void> {
   const sql = getSQL();
   await sql`
     INSERT INTO audit_log (config_id, action, detail)
@@ -136,9 +153,18 @@ export async function getAuditLog(configId: string, limit = 20): Promise<AuditLo
   return rows.map((r) => rowToAuditEntry(r as Record<string, unknown>));
 }
 
-export async function listConfigs(): Promise<ConfigWithStats[]> {
+/**
+ * Scoped to what the viewer may see. Admins see every config; everyone else
+ * sees only their own, so one account holder can't enumerate another's key
+ * pools. Pass `null` only from trusted server-side callers that have already
+ * done their own authorization.
+ */
+export async function listConfigs(
+  viewer: { id: string; is_admin: boolean } | null
+): Promise<ConfigWithStats[]> {
   const sql = getSQL();
   await initSchema();
+  const ownerFilter = viewer && !viewer.is_admin ? viewer.id : null;
   const rows = await sql`
     SELECT
       c.*,
@@ -148,6 +174,7 @@ export async function listConfigs(): Promise<ConfigWithStats[]> {
       COUNT(k.id) FILTER (WHERE k.status = 'cooldown')::int  AS cooldown
     FROM proxy_configs c
     LEFT JOIN api_keys k ON k.config_id = c.id
+    WHERE ${ownerFilter}::text IS NULL OR c.owner_user_id = ${ownerFilter}
     GROUP BY c.id
     ORDER BY c.created_at DESC
   `;
@@ -178,16 +205,19 @@ export async function getConfigByMasterKey(
   return rows[0] ? rowToConfig(rows[0] as Record<string, unknown>) : null;
 }
 
-export async function createConfig(data: CreateConfigInput): Promise<ProxyConfig> {
+export async function createConfig(
+  data: CreateConfigInput,
+  ownerUserId: string
+): Promise<ProxyConfig> {
   const sql = getSQL();
   await initSchema();
   const id = uuidv4();
   const masterKey = uuidv4();
   const rows = await sql`
     INSERT INTO proxy_configs
-      (id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes, cooldown_minutes, master_key)
+      (id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes, cooldown_minutes, master_key, owner_user_id)
     VALUES
-      (${id}, ${data.name}, ${data.target_base_url}, ${data.auth_header_name}, ${data.auth_header_prefix}, ${data.rate_limit_codes}, ${data.cooldown_minutes}, ${masterKey})
+      (${id}, ${data.name}, ${data.target_base_url}, ${data.auth_header_name}, ${data.auth_header_prefix}, ${data.rate_limit_codes}, ${data.cooldown_minutes}, ${masterKey}, ${ownerUserId})
     RETURNING *
   `;
   return rowToConfig(rows[0] as Record<string, unknown>);
@@ -195,11 +225,12 @@ export async function createConfig(data: CreateConfigInput): Promise<ProxyConfig
 
 export async function updateConfig(
   id: string,
-  data: UpdateConfigInput
+  data: UpdateConfigInput,
+  known?: ProxyConfig
 ): Promise<ProxyConfig | null> {
   const sql = getSQL();
   await initSchema();
-  const existing = await getConfig(id);
+  const existing = known ?? (await getConfig(id));
   if (!existing) return null;
   const rows = await sql`
     UPDATE proxy_configs SET
@@ -212,8 +243,31 @@ export async function updateConfig(
     WHERE id = ${id}
     RETURNING *
   `;
-  if (rows[0]) await logAudit(id, "config_updated", "Updated config settings");
-  return rows[0] ? rowToConfig(rows[0] as Record<string, unknown>) : null;
+  if (!rows[0]) return null;
+
+  const updated = rowToConfig(rows[0] as Record<string, unknown>);
+
+  // Where a config points is the security-relevant setting: the proxy injects
+  // this pool's key into whatever host is on the other end. Record the actual
+  // hosts so a redirect to an unexpected destination is visible in the log
+  // rather than hidden behind a generic "settings updated".
+  const before = hostOf(existing.target_base_url);
+  const after = hostOf(updated.target_base_url);
+  if (before !== after) {
+    await logAudit(id, "target_host_changed", `Target host changed from ${before} to ${after}`);
+  } else {
+    await logAudit(id, "config_updated", "Updated config settings");
+  }
+
+  return updated;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 export async function rotateMasterKey(id: string): Promise<ProxyConfig | null> {
@@ -235,6 +289,10 @@ export async function deleteConfig(id: string): Promise<void> {
   await sql`DELETE FROM proxy_configs WHERE id = ${id}`;
 }
 
+/**
+ * Includes the raw secret. Server-side callers that actually forward a request
+ * only. Anything that renders or returns keys must use `listKeyViews`.
+ */
 export async function listKeys(configId: string): Promise<ApiKey[]> {
   const sql = getSQL();
   await initSchema();
@@ -244,30 +302,68 @@ export async function listKeys(configId: string): Promise<ApiKey[]> {
   return rows.map((r) => rowToKey(r as Record<string, unknown>));
 }
 
-export async function getActiveKey(configId: string): Promise<ApiKey | null> {
+/** Same rows with the secret reduced to an identifying preview. */
+export async function listKeyViews(configId: string): Promise<ApiKeyView[]> {
+  const keys = await listKeys(configId);
+  return keys.map(toKeyView);
+}
+
+export function toKeyView(key: ApiKey): ApiKeyView {
+  const { key_value, ...rest } = key;
+  return { ...rest, key_preview: previewKey(key_value) };
+}
+
+/**
+ * Enough to tell two keys apart in a table, not enough to use one. The old UI
+ * showed the first 6 characters, which for most providers is a fixed prefix
+ * (`sk-pro`, `key_li`) and identifies nothing — the last 4 do the work.
+ */
+function previewKey(value: string): string {
+  if (value.length <= 4) return "••••";
+  return `••••${value.slice(-4)}`;
+}
+
+/**
+ * Next key to try.
+ *
+ * `exclude` holds keys already burned during the current request, so a retry
+ * can't reselect the key it just exhausted — selection is "lowest order_index
+ * that's active", and the exhaust write may not be visible yet.
+ */
+export async function getActiveKey(
+  configId: string,
+  exclude?: Set<number>
+): Promise<ApiKey | null> {
   const sql = getSQL();
+  const excluded = exclude && exclude.size > 0 ? [...exclude] : null;
   const rows = await sql`
     SELECT * FROM api_keys
     WHERE config_id = ${configId} AND status = 'active'
+      AND (${excluded}::int[] IS NULL OR NOT (id = ANY(${excluded}::int[])))
     ORDER BY order_index ASC
     LIMIT 1
   `;
   return rows[0] ? rowToKey(rows[0] as Record<string, unknown>) : null;
 }
 
+/** Returns how many keys came back off cooldown. */
 export async function resetCooldownKeys(
   configId: string,
   cooldownMinutes: number
 ): Promise<number> {
   const sql = getSQL();
-  const result = await sql`
+  // RETURNING is what makes the count real. Without it the Neon HTTP driver
+  // hands back an empty array for an UPDATE, so this reported 0 every time
+  // regardless of how many keys it actually reactivated.
+  const rows = await sql`
     UPDATE api_keys
     SET status = 'active', exhausted_at = NULL
     WHERE config_id = ${configId}
       AND status = 'cooldown'
       AND exhausted_at + (${cooldownMinutes} * INTERVAL '1 minute') <= NOW()
+    RETURNING id
   `;
-  return result.length;
+  return rows.length;
 }
 
 export async function resetAllKeys(configId: string): Promise<void> {
@@ -279,17 +375,27 @@ export async function resetAllKeys(configId: string): Promise<void> {
   await logAudit(configId, "keys_reset", "Reset all exhausted/cooldown keys to active");
 }
 
+/**
+ * Returns whether this caller was the one that flipped the key.
+ *
+ * The `status = 'active'` predicate makes the transition idempotent under
+ * concurrency, but callers previously couldn't tell whether they won — which
+ * meant a burst of concurrent requests each counted the same key as "one I
+ * exhausted" and the waterfall's per-provider stats would over-report.
+ */
 export async function markKeyExhausted(
   keyId: number,
   cooldownMinutes: number
-): Promise<void> {
+): Promise<boolean> {
   const sql = getSQL();
   const newStatus = cooldownMinutes > 0 ? "cooldown" : "exhausted";
-  await sql`
+  const rows = await sql`
     UPDATE api_keys
     SET status = ${newStatus}, exhausted_at = NOW()
     WHERE id = ${keyId} AND status = 'active'
+    RETURNING id
   `;
+  return rows.length > 0;
 }
 
 export async function insertKeys(
@@ -344,11 +450,23 @@ export async function incrementRequestCount(keyId: number): Promise<void> {
   await sql`UPDATE api_keys SET request_count = request_count + 1 WHERE id = ${keyId}`;
 }
 
-export async function deleteKey(keyId: number): Promise<void> {
+/**
+ * Scoped to a config on purpose. `api_keys.id` is a global serial, so deleting
+ * by key id alone lets anyone who can reach one config delete keys belonging
+ * to another — the config in the URL was previously decorative.
+ *
+ * Returns false when the key doesn't exist or isn't in that config.
+ */
+export async function deleteKey(configId: string, keyId: number): Promise<boolean> {
   const sql = getSQL();
-  const rows = await sql`DELETE FROM api_keys WHERE id = ${keyId} RETURNING config_id`;
-  const configId = rows[0]?.config_id as string | undefined;
-  if (configId) await logAudit(configId, "key_deleted", "Deleted an API key");
+  const rows = await sql`
+    DELETE FROM api_keys
+    WHERE id = ${keyId} AND config_id = ${configId}
+    RETURNING id
+  `;
+  if (rows.length === 0) return false;
+  await logAudit(configId, "key_deleted", "Deleted an API key");
+  return true;
 }
 
 export async function getKeyStats(configId: string): Promise<KeyStats> {
