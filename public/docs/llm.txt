@@ -1,0 +1,636 @@
+# KeyProxy Waterfall Definition — LLM Reference
+
+This document is a complete, self-contained specification for generating a
+KeyProxy **endpoint definition** — the JSON that describes a conditional API
+waterfall. It is written to be pasted into an LLM together with the API
+documentation of the providers you want to chain. An LLM that follows this
+document can produce a valid definition of arbitrary complexity without ever
+seeing KeyProxy's source code.
+
+Every rule in here is enforced by the same validator that guards saving, so
+JSON that follows this spec will load. JSON that violates it will be rejected
+with a precise message — nothing invalid can be stored or run.
+
+---
+
+## How to use this document (instructions for the human)
+
+1. Create your **providers** in KeyProxy first (Providers → New provider):
+   one provider per upstream API, with its base URL, auth header and key
+   pool. Steps refer to providers by id, and ids only exist in your account.
+2. Create an **endpoint** (Endpoints → New endpoint). Open its **Build** tab
+   and switch to the **JSON** view.
+3. Give an LLM: (a) this document, (b) the API docs of each provider you want
+   in the waterfall, (c) a description of what you want. A prompt template is
+   at the end of this document.
+4. Paste the LLM's JSON into the JSON view and click **Apply to builder**.
+   Every problem is listed with its exact location. Feed the list back to the
+   LLM if anything fails.
+5. On the visual Build tab, set each step's **Provider** dropdown — the LLM
+   cannot know your provider ids, so it leaves placeholders (see below).
+6. Use **Run test** to execute the draft against your real providers (live
+   calls, real credits, nothing logged), then **Save waterfall**.
+
+---
+
+## Instructions for the LLM
+
+You are generating one JSON object: an endpoint definition. Output **only**
+the JSON, no commentary, unless asked otherwise.
+
+- For each step's `config_id`, output the placeholder string
+  `"REPLACE_WITH_PROVIDER_ID"` (optionally suffixed, e.g.
+  `"REPLACE_WITH_PROVIDER_ID_HUNTER"`). The human assigns real providers in
+  the visual editor afterwards.
+- **Never put authentication in a step.** API keys live in the provider's key
+  pool; KeyProxy injects the provider's auth header into every request
+  automatically and a step is *forbidden* from setting that header. When the
+  provider docs say "send `Authorization: Bearer <key>`" or
+  "`X-Api-Key: <key>`", that is configured on the provider, not in your JSON.
+- Step request `path` is **relative to the provider's base URL**. If the
+  provider's docs give `https://api.hunter.io/v2/email-finder`, the provider's
+  base URL is `https://api.hunter.io` and your step path is
+  `/v2/email-finder`.
+- Ask the human which fields the final result must contain if it isn't clear;
+  those become `outputs` and `settings.required_outputs`.
+
+---
+
+## 1. Top-level shape
+
+```json
+{
+  "version": 1,
+  "inputs":  [ InputField, ... ],
+  "steps":   [ Step, ... ],
+  "outputs": [ { "field": "email", "description": "optional" }, ... ],
+  "settings": Settings
+}
+```
+
+| Field | Required | Rules |
+|---|---|---|
+| `version` | yes | Always the number `1`. |
+| `inputs` | yes | What callers send. Max **30**. May be `[]`. |
+| `steps` | yes | Ordered. Max **12**. |
+| `outputs` | yes | Declares the normalized result fields. Informational, but referenced by `required_outputs` (a required field that isn't declared produces a warning). |
+| `settings` | yes | See §5. Unknown settings keys are ignored. |
+
+Unknown **top-level** keys are preserved in a `_extra` bag rather than
+rejected, so forward-compatible extras don't break older deployments. Don't
+invent keys; just know extras won't be lost.
+
+## 2. Inputs
+
+```json
+{ "name": "domain", "type": "string", "required": true,
+  "example": "acme.com", "description": "Company domain" }
+```
+
+- `name`: unique per definition. Becomes the template token
+  `{{input.domain}}`.
+- `type`: one of `"string" | "number" | "boolean" | "object" | "array"`.
+- `required`: boolean. A missing/blank required input rejects the run with
+  HTTP 400 before any provider is called.
+- `example` (optional): prefills the test runner. Always include one — it
+  makes testing one click.
+- Caller values are coerced sensibly: `"50"` → 50 for a number input,
+  `"true"/"1"/"yes"` → true for a boolean. Uncoercible values reject the run.
+- Fields the caller sends that are **not declared** never reach the
+  templates. Declare everything you intend to use.
+
+## 3. Steps
+
+```json
+{
+  "key": "hunter",
+  "name": "Hunter email finder",
+  "config_id": "REPLACE_WITH_PROVIDER_ID_HUNTER",
+  "group": null,
+  "enabled": true,
+  "request": {
+    "method": "GET",
+    "path": "/v2/email-finder",
+    "query": [
+      { "key": "domain",     "value": "{{input.domain}}" },
+      { "key": "first_name", "value": "{{input.first_name}}" }
+    ],
+    "headers": [],
+    "body_type": "none",
+    "body": null
+  },
+  "run_condition": null,
+  "success_condition": null,
+  "output_map": [
+    { "field": "email", "from": "{{response.body.data.email}}", "transform": "lower" },
+    { "field": "confidence", "from": "{{response.body.data.score}}", "transform": "number" }
+  ],
+  "on_success": "stop",
+  "on_failure": "continue",
+  "timeout_ms": null,
+  "max_key_attempts": null,
+  "cost_per_call_cents": null
+}
+```
+
+Field rules (every field above must be present on every step):
+
+| Field | Rules |
+|---|---|
+| `key` | Stable reference name. Pattern `^[a-z][a-z0-9_]{0,39}$`. **Unique** across steps. Later steps reference it (`{{steps.hunter.output.email}}`), so never use array position for references. |
+| `name` | Human label. Required, non-empty. |
+| `config_id` | The provider (uuid). Use `"REPLACE_WITH_PROVIDER_ID..."` placeholders. |
+| `group` | `null`, or a shared string on **consecutive** steps to run them in parallel (§6). A group split by an ungrouped step is invalid. |
+| `enabled` | `false` skips the step entirely (kept in the definition). |
+| `request.method` | `"GET" | "POST" | "PUT" | "PATCH" | "DELETE"`. |
+| `request.path` | Must start with `/`. Templates allowed: `/v2/people/{{input.person_id}}`. Each resolved segment is URL-encoded individually; a segment resolving to `.` or `..` fails the step; a **missing** value in a path fails the step *before* any billed call. |
+| `request.query` | Array of `{key, value}`, max 30. Values are templates. A value whose template resolves to nothing **drops the parameter entirely** (`?email=` and no `email` mean different things to most APIs). |
+| `request.headers` | Array of `{key, value}`, max 30. Forbidden names: `host`, `connection`, `content-length`, `transfer-encoding`, `x-master-key`, `x-endpoint-key`, and **the provider's auth header** (it is injected automatically). A value resolving to text containing CR/LF fails the step. |
+| `request.body_type` | `"none" | "json" | "raw"`. |
+| `request.body` | For `none`: `null`. For `json`: a real JSON **object** (never a string containing JSON — that is rejected, because values must be substituted structurally, not spliced into text). Templates work in any nested value *and in keys*; a key resolving to nothing drops that pair; a value resolving to nothing drops that pair. `Content-Type: application/json` is added automatically. For `raw`: a string (template-interpolated); set your own `Content-Type` header. |
+| `run_condition` | `null` = always run. Otherwise a Rule (§4) deciding whether to call this step at all. Evaluated **before** the request, so it can only see `input`, `result`, and earlier steps — not this step's response. |
+| `success_condition` | `null` = the default rule: **HTTP 2xx AND every field in `settings.required_outputs` is non-empty after this step's `output_map` ran.** Otherwise a Rule evaluated after the response, with the response in scope. |
+| `output_map` | Max 40 entries. Each pulls one value out of the response into a named field of the normalized result. `field` names must not be `__proto__`, `constructor` or `prototype`. Mapping runs **before** the success condition, so the condition can reference `output.email`. `from` may also be a plain literal with no placeholders (e.g. `"prospeo"`) to stamp a constant, such as which provider a value came from. |
+| `on_success` | `"stop"` = this answer wins, skip all later steps (waterfall). `"continue"` = keep going (chain — later steps can use this step's output). |
+| `on_failure` | What to do when the step errors or its success condition fails: `"continue"` (try the next step — the normal waterfall behaviour), `"stop"` (stop and return whatever has been gathered), `"fail"` (fail the whole run with HTTP 502). |
+| `timeout_ms` | `null` (default 20000) or 500–45000. |
+| `max_key_attempts` | `null` (default 3) or 1–5. How many keys from the provider's pool to try if rate-limited. Every attempt is a real, billed HTTP call. |
+| `cost_per_call_cents` | `null` or a number. Feeds cost-per-answer analytics and the parallel-group cost estimate. Optional but recommended. |
+
+### Transforms
+
+Applied to the extracted value: `"none"`, `"trim"`, `"lower"`, `"upper"`,
+`"number"` (unparseable → field omitted), `"boolean"`
+(`true/1/yes/y` → true, `false/0/no/n` → false, else omitted),
+`"first"` (first element of a list), `"join"` (list → `"a, b, c"`).
+
+A value that resolves to `null` or nothing **never** fills a field — a
+provider returning `{"email": null}` has answered "I don't have it", and the
+field stays empty so the waterfall can continue. `0` and `false` DO fill
+fields; they are real answers.
+
+Once a field is filled, a later step **cannot overwrite it** (first write
+wins; empty never overwrites filled).
+
+## 4. Templates and conditions
+
+### Template language
+
+`{{root.path}}` — a path, nothing else. No expressions, no functions, no
+filters, no arithmetic. Path syntax: `a.b`, `a.b[0].c`, `a["key.with.dots"]`,
+negative indexes (`items[-1]` = last). Max depth 12 segments.
+
+Available roots (a closed list — anything else fails validation):
+
+| Root | Meaning | Available in |
+|---|---|---|
+| `input.<name>` | A declared caller input | everywhere |
+| `steps.<key>.output.<field>` | A field an **earlier** step mapped | everywhere |
+| `steps.<key>.body.<path>` | An earlier step's raw response body | everywhere |
+| `steps.<key>.status` | An earlier step's HTTP status | everywhere |
+| `result.<field>` | The merged result **so far** — what the run has already found | everywhere |
+| `response.body.<path>` | THIS step's response body | `output_map.from` and `success_condition` only |
+| `response.status` | THIS step's HTTP status | `output_map.from` and `success_condition` only |
+| `run.id`, `run.started_at` | Run id / ISO start time | everywhere |
+
+**Type preservation:** a template that is *exactly one* placeholder keeps the
+value's type — `{"limit": "{{input.limit}}"}` produces `{"limit": 50}`, not
+`"50"`. Any surrounding text turns it into a string:
+`"q={{input.domain}}"` → `"q=acme.com"`.
+
+**Reference rules (validated at save):**
+- A step may only reference steps that appear **before** it (no forward
+  references), and never a sibling in its own parallel group (they run at the
+  same time), and never itself (use `response.*` for its own response).
+- Referencing an input that isn't declared is a warning, not an error.
+
+### Conditions (Rule)
+
+A Rule is a JSON tree — there is no expression language:
+
+```json
+{ "all": [ Rule, ... ] }        every child must pass (empty array = passes)
+{ "any": [ Rule, ... ] }        at least one child must pass
+{ "not": Rule }                 negation
+{ "path": "...", "op": "...", "value": ... }    a leaf comparison
+```
+
+Trees may nest (the visual editor authors one level; nested trees still run
+and are editable in the JSON view). Max 200 nodes.
+
+Leaf `path` is a plain path (no `{{ }}` braces) resolved against:
+
+- In a `run_condition`: `input.*`, `result.*`, `steps.<key>.*` — there is no
+  response yet.
+- In a `success_condition`: additionally `status` (this step's HTTP status,
+  as a bare path — not `response.status`), `body.<path>` (this step's
+  response body), `output.<field>` (what this step's `output_map` just
+  produced), `headers.<name>` (response header, case-insensitive),
+  `latency_ms`.
+
+Operators — unary (no `value`): `exists`, `not_exists`, `empty`,
+`not_empty`, `is_true`, `is_false`. Binary (require `value`): `eq`, `neq`,
+`gt`, `gte`, `lt`, `lte`, `contains`, `not_contains`, `starts_with`,
+`ends_with`, `in`, `not_in` (these two take an **array** value).
+
+Semantics that matter:
+- `empty` means missing, `null`, `""`, `[]` or `{}`. **`0` and `false` are
+  NOT empty** — a confidence of 0 is a real answer.
+- `eq` compares loosely: `"200"` equals `200`; booleans match their string
+  forms. Objects/arrays compare structurally, key-order-independent.
+- `gt/gte/lt/lte` on a non-numeric value are simply false (they never error).
+- `contains` on a string = substring, on an array = membership, on an object
+  = has key.
+- There is **no regex operator**. Compose `starts_with` / `ends_with` /
+  `contains` / `in` instead.
+
+## 5. Settings
+
+```json
+{
+  "required_outputs": ["email"],
+  "cache_key_fields": null,
+  "cache_key_exclude": [],
+  "cache_key_normalize": true,
+  "group_merge": { "g1": "first_success" },
+  "max_parallel": 5
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `required_outputs` | The fields that make a run count as answered. Drives the **default success condition** of every step and the run's final status. Usually the single most important thing to set. |
+| `cache_key_fields` | `null` = every input participates in the cache key; or an array naming which inputs do. |
+| `cache_key_exclude` | Inputs excluded from the cache key (e.g. a `trace_id`). |
+| `cache_key_normalize` | `true` (default): string inputs are trimmed + lowercased for caching, so `" Acme.com"` and `"acme.com"` share a cached answer. |
+| `group_merge` | Per parallel group id: `"first_success"` (default), `"fill_empty"`, or `"collect"` — see §6. |
+| `max_parallel` | 1–8. Concurrency cap inside a parallel group. |
+
+Caching on/off, TTL, rate limit per key, log retention and body logging are
+**endpoint settings in the dashboard**, not part of this JSON.
+
+## 6. Execution semantics (what actually happens)
+
+Steps run top to bottom. For each step:
+
+1. Disabled → skipped. `run_condition` false → skipped (costs nothing).
+2. The request is built. A missing value in the **path** fails the step
+   before any call; missing query/header/body values are simply omitted.
+3. The call goes out through the provider's key pool — if a key is
+   rate-limited, the next key is tried automatically (up to
+   `max_key_attempts`).
+4. `output_map` runs, then `success_condition` (or the default rule).
+5. Success + `on_success: "stop"` → later steps are skipped, this step's
+   body becomes the response's `raw`. Success + `"continue"` → keep going.
+   Failure → `on_failure` decides.
+
+**Parallel groups:** consecutive steps sharing a `group` string start
+together (their `run_condition`s are checked just before the group starts,
+against what the run has found so far). Results are always merged in
+**declared order, never completion order** — the same inputs always produce
+the same output, regardless of which provider replied faster.
+- `first_success`: the first *listed* member that answered wins. You still
+  pay for every member, every time — that is the trade: latency for cost.
+- `fill_empty`: every member contributes; earlier-listed members win
+  conflicts.
+- `collect`: every member's values are gathered into arrays.
+If nobody in the group answers, the strictest `on_failure` among its members
+applies (`fail` beats `stop` beats `continue`).
+
+**Run status** (`status` in the response):
+- `success` — a step answered and every `required_outputs` field is filled.
+- `partial` — some fields were found, but not all required ones.
+- `miss` — every provider replied; none had it.
+- `error` — something actually broke (unreachable provider, out of time,
+  a step with `on_failure: "fail"` failed).
+
+**A miss is HTTP 200, not 404.** Clay, n8n, Make and Zapier treat any
+non-2xx as a failure and will retry the row or halt the table, so "nobody
+had this email" is a successful response that says so in `status`. Only
+`error` returns a non-2xx (502). Callers must branch on the `status` field,
+never on the HTTP code.
+
+Whole-run budget: 50 seconds. Nothing new starts once the clock runs out.
+
+## 7. Calling the endpoint
+
+```
+POST https://<your-keyproxy>/api/run/<slug>
+x-endpoint-key: kp_ep_...          (or Authorization: Bearer kp_ep_...)
+Content-Type: application/json
+
+{ "domain": "acme.com", "first_name": "Ana" }
+```
+
+The body is **one JSON object** of declared inputs (never an array — one run
+per request), max 128 KB. Response:
+
+```json
+{
+  "status": "success",
+  "output": { "email": "ana@acme.com", "confidence": 0.94 },
+  "raw": { "...the winning provider's response, untouched..." },
+  "resolved_by": "hunter",
+  "missing": [],
+  "error": null,
+  "meta": { "endpoint": "find-email", "version": 4, "duration_ms": 1840,
+            "upstream_calls": 2, "cost_cents": 17, "cache_hit": false,
+            "run_id": "..." },
+  "trace": [ { "key": "prospeo", "status": "miss", "http_status": 200,
+               "latency_ms": 612, "skip_reason": null, "...": "..." }, ... ]
+}
+```
+
+Errors: 401 bad/missing key · 400 invalid input (with per-field `details`) ·
+413 body too large · 429 rate limit (with `Retry-After`) · 503 endpoint
+turned off · 409 endpoint has no steps · 502 run status `error`.
+
+## 8. Providers and the plain proxy (context)
+
+A **provider** = one upstream API: base URL, auth header name + prefix
+(e.g. `Authorization` + `Bearer `), rate-limit status codes (400–599),
+cooldown, and a pool of API keys that rotate automatically. Providers also
+work standalone as a pass-through proxy:
+`https://<your-keyproxy>/api/proxy/<config_id>/<path>` with an
+`x-master-key` header — full docs on the docs page. Waterfall steps inherit
+all of it; that is why steps never mention keys.
+
+Target base URLs must be publicly reachable (localhost, private ranges and
+cloud metadata addresses are refused).
+
+## 9. Hard limits (validation rejects beyond these)
+
+steps ≤ 12 · inputs ≤ 30 · query params ≤ 30/step · headers ≤ 30/step ·
+output_map ≤ 40/step · rule nodes ≤ 200/condition · max_parallel 1–8 ·
+timeout_ms 500–45000 · max_key_attempts 1–5 · step key
+`^[a-z][a-z0-9_]{0,39}$` · request body for `json` must not be a string ·
+groups must be consecutive · no forward/self/same-group references.
+
+## 10. Common LLM mistakes — check before emitting
+
+1. Auth header in a step. **Never** — the provider injects it.
+2. `"body": "{\"q\": \"{{input.domain}}\"}"` — a string. Must be a real
+   object: `"body": { "q": "{{input.domain}}" }`.
+3. Referencing a later step, itself, or a parallel sibling.
+4. `steps[0]`-style references. Steps are referenced by `key`, never index.
+5. Forgetting `settings.required_outputs` — without it, any 2xx counts as
+   an answer, even `{"email": null}`, and the waterfall stops too early.
+6. Expecting 404 on a miss. A miss is HTTP 200 with `"status": "miss"`.
+7. Using `{{ }}` braces inside condition `path`s. Condition paths are bare:
+   `"path": "output.email"`, not `"path": "{{output.email}}"`.
+8. Inventing operators (`regex`, `matches`, `gte_len`…). Only the 18 listed.
+9. Absolute URLs in `request.path`. Paths are relative to the provider's
+   base URL and start with `/`.
+10. Omitting step fields. Every step field in §3 must be present (use
+    `null` / `[]` where shown).
+
+## 11. Worked examples
+
+### A. Classic three-provider email waterfall
+
+Try Prospeo; if it has no email, try BetterEnrich; then Hunter. One answer,
+whoever had it.
+
+```json
+{
+  "version": 1,
+  "inputs": [
+    { "name": "first_name", "type": "string", "required": true,  "example": "Ana" },
+    { "name": "last_name",  "type": "string", "required": true,  "example": "Garcia" },
+    { "name": "domain",     "type": "string", "required": true,  "example": "acme.com" }
+  ],
+  "steps": [
+    {
+      "key": "prospeo", "name": "Prospeo",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_PROSPEO",
+      "group": null, "enabled": true,
+      "request": {
+        "method": "POST", "path": "/email-finder",
+        "query": [], "headers": [],
+        "body_type": "json",
+        "body": {
+          "first_name": "{{input.first_name}}",
+          "last_name":  "{{input.last_name}}",
+          "company":    "{{input.domain}}"
+        }
+      },
+      "run_condition": null,
+      "success_condition": null,
+      "output_map": [
+        { "field": "email",  "from": "{{response.body.response.email}}", "transform": "lower" },
+        { "field": "source", "from": "prospeo", "transform": "none" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 2
+    },
+    {
+      "key": "betterenrich", "name": "BetterEnrich",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_BETTERENRICH",
+      "group": null, "enabled": true,
+      "request": {
+        "method": "POST", "path": "/api/find-work-email",
+        "query": [], "headers": [],
+        "body_type": "json",
+        "body": {
+          "full_name": "{{input.first_name}} {{input.last_name}}",
+          "domain": "{{input.domain}}"
+        }
+      },
+      "run_condition": null,
+      "success_condition": null,
+      "output_map": [
+        { "field": "email", "from": "{{response.body.email}}", "transform": "lower" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 5
+    },
+    {
+      "key": "hunter", "name": "Hunter",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_HUNTER",
+      "group": null, "enabled": true,
+      "request": {
+        "method": "GET", "path": "/v2/email-finder",
+        "query": [
+          { "key": "domain",     "value": "{{input.domain}}" },
+          { "key": "first_name", "value": "{{input.first_name}}" },
+          { "key": "last_name",  "value": "{{input.last_name}}" }
+        ],
+        "headers": [], "body_type": "none", "body": null
+      },
+      "run_condition": null,
+      "success_condition": {
+        "all": [
+          { "path": "status", "op": "eq", "value": 200 },
+          { "path": "output.email", "op": "not_empty" },
+          { "path": "body.data.score", "op": "gte", "value": 70 }
+        ]
+      },
+      "output_map": [
+        { "field": "email",      "from": "{{response.body.data.email}}", "transform": "lower" },
+        { "field": "confidence", "from": "{{response.body.data.score}}", "transform": "number" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 12
+    }
+  ],
+  "outputs": [
+    { "field": "email", "description": "Verified work email" },
+    { "field": "confidence" },
+    { "field": "source" }
+  ],
+  "settings": {
+    "required_outputs": ["email"],
+    "cache_key_fields": null,
+    "cache_key_exclude": [],
+    "cache_key_normalize": true,
+    "group_merge": {},
+    "max_parallel": 5
+  }
+}
+```
+
+Why it works: `required_outputs: ["email"]` makes the default success rule
+"2xx AND email non-empty", so Prospeo returning `200 {"email": null}` counts
+as a miss and the run falls through. Hunter adds a custom rule on top: its
+answer only counts at score ≥ 70.
+
+### B. Chain — enrich, then verify with the enriched value
+
+`on_success: "continue"` turns a step into a link in a chain; the next step
+reads its output.
+
+```json
+"steps": [
+  {
+    "key": "find", "name": "Find email", "config_id": "REPLACE_WITH_PROVIDER_ID_FINDER",
+    "group": null, "enabled": true,
+    "request": { "method": "GET", "path": "/v2/email-finder",
+      "query": [ { "key": "domain", "value": "{{input.domain}}" } ],
+      "headers": [], "body_type": "none", "body": null },
+    "run_condition": null, "success_condition": null,
+    "output_map": [ { "field": "email", "from": "{{response.body.data.email}}", "transform": "lower" } ],
+    "on_success": "continue", "on_failure": "stop",
+    "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": null
+  },
+  {
+    "key": "verify", "name": "Verify it", "config_id": "REPLACE_WITH_PROVIDER_ID_VERIFIER",
+    "group": null, "enabled": true,
+    "request": { "method": "GET", "path": "/v2/email-verifier",
+      "query": [ { "key": "email", "value": "{{steps.find.output.email}}" } ],
+      "headers": [], "body_type": "none", "body": null },
+    "run_condition": { "path": "steps.find.output.email", "op": "not_empty" },
+    "success_condition": null,
+    "output_map": [
+      { "field": "deliverable", "from": "{{response.body.data.result}}", "transform": "none" }
+    ],
+    "on_success": "stop", "on_failure": "continue",
+    "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": null
+  }
+]
+```
+
+### C. Parallel race + conditional mop-up (extreme-complexity patterns)
+
+Two providers asked **at the same time**; a third, expensive one is called
+only if neither filled the phone; results normalized throughout.
+
+```json
+"steps": [
+  {
+    "key": "vendor_a", "name": "Vendor A", "config_id": "REPLACE_WITH_PROVIDER_ID_A",
+    "group": "race", "enabled": true,
+    "request": { "method": "POST", "path": "/v1/person/enrich",
+      "query": [], "headers": [ { "key": "X-Client", "value": "keyproxy-{{run.id}}" } ],
+      "body_type": "json",
+      "body": { "profile": { "domain": "{{input.domain}}", "name": "{{input.full_name}}" },
+                "options": { "include": ["phone", "title"] } } },
+    "run_condition": null, "success_condition": null,
+    "output_map": [
+      { "field": "phone", "from": "{{response.body.person.phones[0].number}}", "transform": "trim" },
+      { "field": "title", "from": "{{response.body.person.title}}", "transform": "none" }
+    ],
+    "on_success": "continue", "on_failure": "continue",
+    "timeout_ms": 15000, "max_key_attempts": 2, "cost_per_call_cents": 8
+  },
+  {
+    "key": "vendor_b", "name": "Vendor B", "config_id": "REPLACE_WITH_PROVIDER_ID_B",
+    "group": "race", "enabled": true,
+    "request": { "method": "GET", "path": "/people/match",
+      "query": [ { "key": "domain", "value": "{{input.domain}}" },
+                 { "key": "name",   "value": "{{input.full_name}}" } ],
+      "headers": [], "body_type": "none", "body": null },
+    "run_condition": null, "success_condition": null,
+    "output_map": [
+      { "field": "phone", "from": "{{response.body.mobile_phone}}", "transform": "trim" },
+      { "field": "title", "from": "{{response.body.job_title}}", "transform": "none" }
+    ],
+    "on_success": "continue", "on_failure": "continue",
+    "timeout_ms": 15000, "max_key_attempts": 2, "cost_per_call_cents": 6
+  },
+  {
+    "key": "expensive", "name": "Premium phone lookup",
+    "config_id": "REPLACE_WITH_PROVIDER_ID_PREMIUM",
+    "group": null, "enabled": true,
+    "request": { "method": "POST", "path": "/v3/mobile",
+      "query": [], "headers": [], "body_type": "json",
+      "body": { "person": "{{input.full_name}}", "company_domain": "{{input.domain}}" } },
+    "run_condition": {
+      "all": [
+        { "path": "result.phone", "op": "empty" },
+        { "path": "input.want_phone", "op": "is_true" }
+      ]
+    },
+    "success_condition": {
+      "any": [
+        { "path": "output.phone", "op": "starts_with", "value": "+" },
+        { "path": "body.status", "op": "in", "value": ["found", "partial_match"] }
+      ]
+    },
+    "output_map": [
+      { "field": "phone", "from": "{{response.body.number}}", "transform": "trim" }
+    ],
+    "on_success": "stop", "on_failure": "stop",
+    "timeout_ms": 30000, "max_key_attempts": 1, "cost_per_call_cents": 45
+  }
+],
+"settings": {
+  "required_outputs": ["phone"],
+  "cache_key_fields": ["domain", "full_name"],
+  "cache_key_exclude": [],
+  "cache_key_normalize": true,
+  "group_merge": { "race": "fill_empty" },
+  "max_parallel": 5
+}
+```
+
+Patterns shown: a parallel group with `fill_empty` merge (both contribute,
+earlier-listed wins conflicts); a mop-up step gated on **`result.phone`
+empty** (the merged result so far — the idiom for "only pay for this if we
+still don't have it") AND a caller flag; a custom success rule mixing
+`output.*`, `body.*` and an `in` list; `cache_key_fields` restricted so a
+`want_phone` flag doesn't fragment the cache; per-step timeouts, retry caps
+and costs.
+
+---
+
+## Prompt template (copy from here down into your LLM)
+
+> You are building a KeyProxy endpoint definition: a JSON description of a
+> conditional API waterfall that tries several providers in order (or in
+> parallel) and returns one normalized result.
+>
+> Follow the attached "KeyProxy Waterfall Definition — LLM Reference"
+> exactly. Also attached: the API documentation for each provider I want to
+> use.
+>
+> What I want: [DESCRIBE: which providers, in what order or parallel, what
+> the caller sends, which fields the result must contain, any conditions —
+> e.g. "only call X if Y found nothing", "only accept scores above 80".]
+>
+> Rules:
+> - Output only the JSON definition, nothing else.
+> - Use "REPLACE_WITH_PROVIDER_ID_<NAME>" for every config_id.
+> - Never put API keys or auth headers in any step.
+> - Set settings.required_outputs to the fields that count as an answer.
+> - Include every step field, and run the reference's §10 mistake checklist
+>   over your own output before answering.

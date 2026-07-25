@@ -14,6 +14,17 @@
 
 <div class="log-entry">
   <div class="date">25 Jul 2026</div>
+  <h3>Public API docs + LLM-consumable definition spec <span class="status done">Shipped</span></h3>
+  <ul>
+    <li><code>/docs/index.html</code> — human setup guide (proxy, waterfalls, run API, LLM workflow). <code>/docs/llm.txt</code> — complete machine-readable spec of the definition JSON: schema, template language, all 18 operators, execution semantics, limits, three worked examples up to a parallel-race + conditional-mop-up definition, a 10-point LLM-mistake checklist, and a ready prompt template.</li>
+    <li>The spec's promise is <em>proven, not asserted</em>: a script parses every JSON example out of llm.txt and runs it through <code>validateEndpointDefinition</code>; example A was additionally saved through the real <code>PUT /definition</code> route (200, then cleaned up). One self-reference bug in an example was caught exactly this way before shipping.</li>
+    <li><code>/docs/</code> made a public middleware prefix — the workflow depends on pasting the spec into outside tools, and nothing in it is account-specific. The brain stays gated.</li>
+    <li>Pointers added where they're needed: the builder's JSON view links the spec; README documents both files.</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
   <h3>Phase 9 — UI/UX modernization sweep <span class="status done">Shipped</span></h3>
   <ul>
     <li><strong>Token layer:</strong> tabular-nums set once on <code>body</code>; a small motion system (<code>kp-fade/kp-pop</code> keyframes) with a global <code>prefers-reduced-motion</code> neutralizer; press feedback (<code>kp-press</code>) + focus-visible outlines on every shared button class; icon buttons gained hover backgrounds.</li>

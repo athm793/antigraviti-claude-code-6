@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy — API Documentation</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #08080f; color: #c8c8d8;
+    font: 15px/1.65 -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: 40px 20px;
+    font-variant-numeric: tabular-nums;
+  }
+  main { max-width: 860px; margin: 0 auto; }
+  h1 { color: #fff; font-size: 27px; margin-bottom: 4px; }
+  h2 { color: #fff; font-size: 20px; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #1a1a28; }
+  h3 { color: #fff; font-size: 16px; margin: 24px 0 8px; }
+  p, li { color: #c8c8d8; }
+  ul, ol { padding-left: 22px; margin: 8px 0; }
+  li { margin: 5px 0; }
+  a { color: #00C4B4; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: "SF Mono", Consolas, monospace; font-size: 13px; }
+  code { background: #15151f; border: 1px solid #2a2a38; border-radius: 4px; padding: 1px 6px; color: #e8e8f0; }
+  pre {
+    background: #0a0a10; border: 1px solid #2a2a38; border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; margin: 12px 0; color: #c8c8d8;
+  }
+  pre code { background: none; border: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 12px; border: 1px solid #2a2a38; vertical-align: top; }
+  th { background: #111118; color: #fff; font-weight: 600; }
+  .muted { color: #8b8b9e; }
+  .subtitle { color: #8b8b9e; margin-bottom: 26px; }
+  .callout {
+    background: #0d1a19; border: 1px solid #00C4B4; border-radius: 10px;
+    padding: 16px 18px; margin: 16px 0;
+  }
+  .callout strong { color: #00C4B4; }
+  .warn {
+    background: #1a140a; border: 1px solid #d97706; border-radius: 10px;
+    padding: 14px 18px; margin: 14px 0;
+  }
+  .warn strong { color: #f5b301; }
+  .pill { display: inline-block; background: #2a2a38; color: #c8c8d8; border-radius: 5px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
+  nav.toc { background: #111118; border: 1px solid #2a2a38; border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
+  nav.toc a { display: inline-block; margin-right: 16px; }
+</style>
+</head>
+<body>
+<main>
+<h1>KeyProxy — API Documentation</h1>
+<p class="subtitle">Key-rotation proxy and conditional API waterfalls.</p>
+
+<nav class="toc" aria-label="Contents">
+  <a href="#proxy">1 · Proxy setup</a>
+  <a href="#waterfalls">2 · Waterfalls</a>
+  <a href="#llm">3 · Build with an LLM</a>
+  <a href="#run-api">4 · Run API</a>
+  <a href="#reference">5 · Reference</a>
+</nav>
+
+<div class="callout">
+  <strong>Building a waterfall with an LLM?</strong> Skip straight to
+  <a href="#llm">section 3</a>. You give any capable model
+  <a href="llm.txt">our machine-readable spec</a> plus your providers' API
+  docs, and it writes the whole definition for you — conditions, parallel
+  groups, output mapping, all of it.
+</div>
+
+<h2 id="proxy">1 · Setting up the proxy</h2>
+
+<p>A <strong>provider</strong> is one upstream API plus a pool of API keys.
+KeyProxy forwards your calls with the next active key injected; when a key
+hits a rate limit, it's benched and the next one is used automatically.</p>
+
+<ol>
+  <li><strong>Create a provider</strong> (Providers → New provider):
+    <table>
+      <tr><th>Field</th><th>What to enter</th></tr>
+      <tr><td>Target base URL</td><td>The API's origin, e.g. <code>https://api.hunter.io</code>. Must be publicly reachable — localhost and private ranges are refused.</td></tr>
+      <tr><td>Auth header name + prefix</td><td>How this API expects its key, e.g. <code>Authorization</code> + <code>Bearer&nbsp;</code>, or <code>X-Api-Key</code> with no prefix. Check the provider's docs.</td></tr>
+      <tr><td>Rate-limit status codes</td><td>Which responses mean "this key is spent" — usually <code>429</code>. Only 400–599 are accepted.</td></tr>
+      <tr><td>Cooldown</td><td>Minutes before a rate-limited key is retried. 0 = benched until you reset it.</td></tr>
+    </table>
+  </li>
+  <li><strong>Add keys</strong> — paste them on the provider page, one per line.</li>
+  <li><strong>Call the proxy</strong> — replace the API's base URL with your proxy URL:
+<pre><code># Before — direct, one key, dies on rate limits
+curl https://api.hunter.io/v2/email-finder?domain=acme.com \
+  -H "X-Api-Key: real-key"
+
+# After — through KeyProxy, rotates across the whole pool
+curl https://&lt;your-keyproxy&gt;/api/proxy/&lt;CONFIG_ID&gt;/v2/email-finder?domain=acme.com \
+  -H "x-master-key: &lt;MASTER_KEY&gt;"</code></pre>
+    The master key (shown on the provider card) authenticates <em>you</em> to
+    KeyProxy; it can also go in <code>Authorization: Bearer …</code>. KeyProxy
+    strips it, injects the next pool key, and forwards everything else —
+    method, headers, body — unchanged.</li>
+</ol>
+
+<h2 id="waterfalls">2 · Waterfalls</h2>
+
+<p>An <strong>endpoint</strong> is one public URL that runs an ordered list of
+<strong>steps</strong>. Each step calls one of your providers; rules decide
+whether a step runs and whether its response counts as an answer. The classic
+use: try Prospeo, and if it returns no email try BetterEnrich, then Hunter —
+one URL, one response shape, whichever provider had it.</p>
+
+<h3>Concepts</h3>
+<ul>
+  <li><strong>Inputs</strong> — what callers send (<code>domain</code>, <code>first_name</code>…). Each becomes a <code>{{input.…}}</code> token usable in any step.</li>
+  <li><strong>Steps</strong> — a request template against one provider, plus an <em>output map</em> that pulls fields out of its response into your normalized result. Auth is never in a step — it comes from the provider's key pool.</li>
+  <li><strong>Answered?</strong> — by default, a step counts as an answer when it returns 2xx <em>and</em> fills every required output field. So a provider replying <code>200 {"email": null}</code> is a miss and the waterfall moves on. Custom conditions can demand more (e.g. score ≥ 70).</li>
+  <li><strong>Stop or continue</strong> — "stop on success" makes a waterfall; "continue" makes a chain that gathers fields from several providers (e.g. find an email, then verify it).</li>
+  <li><strong>Parallel groups</strong> — opt-in: consecutive steps can run at the same time. Faster, but you pay every member on every run. Results always merge in listed order, so runs are reproducible.</li>
+</ul>
+
+<h3>Building one</h3>
+<ol>
+  <li>Endpoints → New endpoint. You get the public URL and an endpoint key (shown once — it's stored as a hash).</li>
+  <li>On the <strong>Build</strong> tab, declare inputs and add a step per provider, in the order you want them tried. The step editor covers conditions, output mapping, and what to do on success/failure. Or write JSON directly — see <a href="#llm">section 3</a>.</li>
+  <li><strong>Run test</strong> executes the unsaved draft against your real providers (live calls, real credits, nothing logged) and shows exactly what each step did, including why a condition passed or failed.</li>
+  <li><strong>Save waterfall</strong>. Every save is a version; Settings has the history and one-click restore.</li>
+</ol>
+
+<h3>Worth knowing</h3>
+<ul>
+  <li><strong>Caching</strong> (Settings) — a repeated lookup returns the answer you already bought, at zero upstream calls. Editing any step invalidates automatically; misses are never cached, so "nobody had it yesterday" doesn't stop you asking today.</li>
+  <li><strong>Runs tab</strong> — per-provider hit rate, share of answers, and cost per answer. Don't compare hit rates between steps: a later step only sees what everything before it missed.</li>
+  <li><strong>Rate limit</strong> — per endpoint key, per minute (Settings). It's a spend control: every run buys upstream calls.</li>
+</ul>
+
+<h2 id="llm">3 · Build the JSON with an LLM</h2>
+
+<p>The whole waterfall is one JSON document, and
+<a href="llm.txt"><strong>/docs/llm.txt</strong></a> is a complete,
+self-contained specification of it — schema, template language, all 18
+condition operators, execution semantics, hard limits, worked examples up to
+multi-stage parallel definitions, and a checklist of the mistakes models
+actually make. Every example in it is validated against the real saving
+route in CI-style checks, so what the spec teaches is what the app accepts.</p>
+
+<ol>
+  <li>Create your providers first (section 1). Steps refer to providers by id, so they must exist.</li>
+  <li>Open a capable LLM. Paste in: <a href="llm.txt">llm.txt</a>, the API docs of each provider you want to chain, and what you want (the spec ends with a ready-made prompt template).</li>
+  <li>Take the JSON it produces, open your endpoint's Build tab → <strong>JSON</strong> view, paste, and click <strong>Apply to builder</strong>. Every problem is listed with its exact location — paste the list back into the LLM if anything fails.</li>
+  <li>Assign each step's provider in the visual view (the model can't know your provider ids — it leaves placeholders, and the JSON view flags them).</li>
+  <li>Run test, then Save.</li>
+</ol>
+
+<div class="warn"><strong>Never give an LLM your API keys.</strong> It doesn't
+need them — keys live in the provider's pool and are injected automatically.
+The spec instructs models to refuse to place auth in steps; the validator
+rejects it anyway.</div>
+
+<h2 id="run-api">4 · Run API</h2>
+
+<pre><code>POST https://&lt;your-keyproxy&gt;/api/run/&lt;slug&gt;
+x-endpoint-key: kp_ep_...        # or: Authorization: Bearer kp_ep_...
+Content-Type: application/json
+
+{ "domain": "acme.com", "first_name": "Ana" }</code></pre>
+
+<p>One JSON object of declared inputs per request (max 128&nbsp;KB). Response:</p>
+
+<pre><code>{
+  "status": "success",                  // success | partial | miss | error
+  "output": { "email": "ana@acme.com" },// your normalized fields
+  "raw": { ... },                       // the winning provider's response, untouched
+  "resolved_by": "hunter",              // which step answered
+  "missing": [],                        // required fields still empty
+  "error": null,
+  "meta": { "duration_ms": 1840, "upstream_calls": 2,
+            "cost_cents": 17, "cache_hit": false, "run_id": "..." },
+  "trace": [ ...one entry per step: ran/skipped/why, status, latency... ]
+}</code></pre>
+
+<table>
+  <tr><th><code>status</code></th><th>Meaning</th><th>HTTP</th></tr>
+  <tr><td><code>success</code></td><td>A provider answered; every required field is filled</td><td>200</td></tr>
+  <tr><td><code>partial</code></td><td>Some fields found, but not all required ones</td><td>200</td></tr>
+  <tr><td><code>miss</code></td><td>Everyone replied; nobody had it</td><td>200</td></tr>
+  <tr><td><code>error</code></td><td>Something broke — unreachable provider, out of time</td><td>502</td></tr>
+</table>
+
+<div class="warn"><strong>A miss is HTTP 200, not 404.</strong> Clay, n8n,
+Make and Zapier treat any non-2xx as a failure and will retry the row or halt
+the table — so "no email found" is a successful response that says so. Branch
+on the <code>status</code> field, never on the HTTP code.</div>
+
+<p class="muted">Other responses: 401 bad/missing key · 400 invalid input
+(with per-field details) · 413 body too large · 429 rate limited (with
+<code>Retry-After</code>) · 503 endpoint turned off · 409 endpoint has no
+steps.</p>
+
+<h2 id="reference">5 · Reference</h2>
+
+<table>
+  <tr><th>Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr>
+  <tr><td>ALL</td><td><code>/api/proxy/[configId]/[...path]</code></td><td>master key</td><td>Pass-through proxy with key rotation</td></tr>
+  <tr><td>POST</td><td><code>/api/run/[slug]</code></td><td>endpoint key</td><td>Run a waterfall</td></tr>
+  <tr><td colspan="4" class="muted">Everything else (creating providers/endpoints, saving definitions, keys, runs, settings) is the dashboard's session-authenticated API — the full table is in the project README.</td></tr>
+</table>
+
+<p class="muted" style="margin-top:28px">
+  Machine-readable definition spec: <a href="llm.txt">/docs/llm.txt</a> ·
+  Dashboard: <a href="/">home</a>
+</p>
+</main>
+</body>
+</html>

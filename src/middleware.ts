@@ -9,6 +9,9 @@ import { SESSION_COOKIE_NAME, verifyToken } from "./lib/sessionToken";
 // - /api/run/*: the public waterfall endpoint, authenticated by a hashed endpoint key
 // - /api/cron/*: called by the platform scheduler, which has no session; gated
 //   fail-closed on CRON_SECRET inside the handler
+// - /docs/*: static product documentation. Public on purpose — the LLM
+//   workflow depends on pasting /docs/llm.txt into outside tools, and there
+//   is nothing account-specific in it. (The brain files stay gated.)
 // - /api/health: needs to stay reachable by uptime monitors
 //
 // Every prefix keeps its trailing slash on purpose. Matching is startsWith, so
@@ -21,6 +24,7 @@ const PUBLIC_PREFIXES = [
   "/api/debug/",
   "/api/run/",
   "/api/cron/",
+  "/docs/",
   "/api/health",
 ];
 

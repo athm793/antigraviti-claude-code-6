@@ -172,6 +172,13 @@ curl https://your-keyproxy.vercel.app/api/proxy/CONFIG_ID/v1/models \
 
 ---
 
+## Documentation
+
+Full product docs are served by the app itself, publicly:
+
+- **`/docs/`** — setup guide: providers, the proxy, building waterfalls, the run API.
+- **`/docs/llm.txt`** — a complete machine-readable spec of the waterfall definition JSON. Paste it into any capable LLM together with your providers' API docs and it can write the whole definition for you — conditions, parallel groups, output mapping, arbitrary complexity. Every example in it is validated against the real save route, and it ends with a ready-made prompt template. Paste the result into the builder's JSON view, which reports every problem with its exact location.
+
 ## Running a waterfall
 
 Build the steps under **Endpoints**, then call the one URL:

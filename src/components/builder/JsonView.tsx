@@ -160,7 +160,15 @@ export function JsonView({
           <h2 className="text-base font-semibold text-white">Definition JSON</h2>
           <p className={hintCls}>
             Edit, paste in a waterfall from somewhere else, or save a copy. Changes here only
-            reach the builder when you click Apply.
+            reach the builder when you click Apply. Want an LLM to write this for you? Give it{" "}
+            <a
+              href="/docs/llm.txt"
+              className="text-[#00C4B4] hover:underline"
+            >
+              /docs/llm.txt
+            </a>{" "}
+            plus your providers&apos; API docs — it contains everything a model needs, including
+            the prompt to use.
           </p>
         </div>
 
