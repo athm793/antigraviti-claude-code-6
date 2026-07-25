@@ -98,7 +98,7 @@ export function EndpointKeysManager({
 
       <p className={hintCls}>
         Callers send one of these as an <code className="text-[#00C4B4]">x-endpoint-key</code>{" "}
-        header. Keys are stored encrypted, so a key can only be seen once, when it&apos;s created.
+        header. Only a one-way hash of each key is stored, so a key can only be seen once, when it&apos;s created.
       </p>
 
       {issued && (

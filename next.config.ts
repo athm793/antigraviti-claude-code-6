@@ -50,7 +50,7 @@ const nextConfig: NextConfig = {
     return [
       {
         // Everything except the pass-through API surfaces.
-        source: "/((?!api/proxy|api/debug|api/run).*)",
+        source: "/((?!api/proxy|api/debug|api/run|api/cron).*)",
         headers: securityHeaders,
       },
     ];

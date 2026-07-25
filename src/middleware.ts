@@ -7,6 +7,8 @@ import { SESSION_COOKIE_NAME, verifyToken } from "./lib/sessionToken";
 // - /api/auth/*: login, logout, setup and "who am I" endpoints
 // - /api/proxy/*, /api/debug/*: authenticated separately via per-config master keys
 // - /api/run/*: the public waterfall endpoint, authenticated by a hashed endpoint key
+// - /api/cron/*: called by the platform scheduler, which has no session; gated
+//   fail-closed on CRON_SECRET inside the handler
 // - /api/health: needs to stay reachable by uptime monitors
 //
 // Every prefix keeps its trailing slash on purpose. Matching is startsWith, so
@@ -18,6 +20,7 @@ const PUBLIC_PREFIXES = [
   "/api/proxy/",
   "/api/debug/",
   "/api/run/",
+  "/api/cron/",
   "/api/health",
 ];
 

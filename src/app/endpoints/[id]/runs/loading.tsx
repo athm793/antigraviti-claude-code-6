@@ -15,9 +15,25 @@ export default function Loading() {
         ))}
       </div>
 
+      {/* Provider performance, then the run table — the real page's two cards,
+          so nothing changes shape when the data lands. */}
       <div className="bg-[#111118] border border-[#2a2a38] rounded-xl p-6 flex flex-col gap-4">
-        <SkeletonBlock className="h-4 w-40" />
-        <SkeletonTableRows rows={6} />
+        <SkeletonBlock className="h-4 w-64" />
+        <SkeletonTableRows rows={3} />
+        <SkeletonBlock className="h-[72px] rounded-lg" />
+      </div>
+
+      <div className="bg-[#111118] border border-[#2a2a38] rounded-xl p-6 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <SkeletonBlock className="h-4 w-32" />
+          <SkeletonBlock className="h-11 w-44 rounded-lg" />
+        </div>
+        {/* The list is fixed at 15 a page, so the skeleton is too. */}
+        <SkeletonTableRows rows={15} />
+        <div className="flex items-center justify-between gap-4 pt-2">
+          <SkeletonBlock className="h-3 w-48" />
+          <SkeletonBlock className="h-11 w-64 rounded-lg" />
+        </div>
       </div>
     </div>
   );

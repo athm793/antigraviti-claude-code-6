@@ -1,3 +1,5 @@
+import { after } from "next/server";
+import { v4 as uuidv4 } from "uuid";
 import { extractEndpointKey } from "@/lib/endpointKeys";
 import {
   authenticateEndpointKey,
@@ -7,6 +9,8 @@ import {
 } from "@/lib/endpointsDb";
 import { validateRunInput } from "@/lib/engine/input";
 import { executeEndpointRun, HARD_DEADLINE_MS } from "@/lib/runner";
+import { cacheKeyFor, readCache, writeCache } from "@/lib/runCache";
+import { persistRun } from "@/lib/runLog";
 import type { RunResult } from "@/lib/engine/execute";
 
 /**
@@ -117,10 +121,82 @@ export async function POST(
     return json({ error: "Check the input", details: input.errors }, 400);
   }
 
+  // --- Cache -----------------------------------------------------------
+  //
+  // The version id is part of the key, which *is* the invalidation story: edit
+  // a step and every answer bought under the old definition goes cold on its
+  // own. The owner is in it so one tenant's enriched contact can never be
+  // served to another.
+  const runId = uuidv4();
+  const started = Date.now();
+  const cacheKey = endpoint.cache_enabled
+    ? cacheKeyFor({
+        ownerId: endpoint.owner_user_id,
+        endpointId: endpoint.id,
+        versionId: version?.id ?? null,
+        input: input.value,
+        settings: definition.settings,
+      })
+    : null;
+
+  if (cacheKey) {
+    const cached = await readCache(cacheKey).catch(() => null);
+    if (cached) {
+      const meta = {
+        endpoint: endpoint.slug,
+        version: version?.version_no ?? null,
+        duration_ms: Date.now() - started,
+        upstream_calls: 0,
+        cost_cents: 0,
+        cache_hit: true,
+      };
+      after(async () => {
+        try {
+          await persistRun({
+            runId,
+            endpoint,
+            versionId: version?.id ?? null,
+            input: input.value,
+            cacheHit: true,
+            result: {
+              status: cached.status,
+              output: cached.output,
+              raw: cached.raw,
+              resolved_by: cached.resolved_by,
+              steps: [],
+              duration_ms: meta.duration_ms,
+              cost_cents: 0,
+              upstream_calls: 0,
+              missing_outputs: cached.missing_outputs,
+              error: null,
+            },
+          });
+        } catch (err) {
+          console.error("[run] could not log cache hit", runId, err);
+        }
+      });
+
+      return json(
+        {
+          status: cached.status,
+          output: cached.output,
+          raw: cached.raw,
+          resolved_by: cached.resolved_by,
+          missing: cached.missing_outputs,
+          error: null,
+          meta,
+          trace: [],
+        },
+        200
+      );
+    }
+  }
+
   // --- Run it ----------------------------------------------------------
   let result: RunResult;
   try {
     result = await executeEndpointRun({
+      runId,
       definition,
       input: input.value,
       deadlineMs: Math.min(endpoint.run_deadline_ms, HARD_DEADLINE_MS),
@@ -133,7 +209,35 @@ export async function POST(
     return json({ error: "The run failed unexpectedly" }, 500);
   }
 
-  void touchEndpointKey(keyRecordId).catch(() => {});
+  // Logging and caching happen after the response is sent, so they cost the
+  // caller nothing — this is a request they are waiting on to enrich a row.
+  after(async () => {
+    try {
+      await persistRun({
+        runId,
+        endpoint,
+        versionId: version?.id ?? null,
+        input: input.value,
+        cacheHit: false,
+        result,
+      });
+      if (cacheKey) {
+        await writeCache(
+          cacheKey,
+          endpoint.id,
+          version?.id ?? null,
+          runId,
+          result,
+          endpoint.cache_ttl_seconds
+        );
+      }
+      await touchEndpointKey(keyRecordId);
+    } catch (err) {
+      // A failed log must never turn a successful run into an error for the
+      // caller — they already have their answer.
+      console.error("[run] could not record run", runId, err);
+    }
+  });
 
   return json(
     {
@@ -150,6 +254,7 @@ export async function POST(
         upstream_calls: result.upstream_calls,
         cost_cents: result.cost_cents,
         cache_hit: false,
+        run_id: runId,
       },
       trace: result.steps,
     },

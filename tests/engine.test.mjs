@@ -15,6 +15,7 @@ import { buildStepRequest } from "../.engine-build/engine/request.js";
 import { validateEndpointDefinition } from "../.engine-build/engine/validate.js";
 import { runEndpoint } from "../.engine-build/engine/execute.js";
 import { validateRunInput } from "../.engine-build/engine/input.js";
+import { canonicalizeInput, cacheKeyMaterial } from "../.engine-build/engine/cacheKey.js";
 
 let pass = 0;
 const failures = [];
@@ -512,6 +513,42 @@ check("undeclared fields are surfaced rather than silently ignored",
   validateRunInput(fields, { domain: "acme.com", doamin: "typo" }).unknown, ["doamin"]);
 ok("undeclared fields never reach the templates",
   validateRunInput(fields, { domain: "acme.com", doamin: "typo" }).value.doamin === undefined);
+
+// -------------------------------------------------------------- cache keys
+//
+// A cache is only worth having if two calls meaning the same thing produce the
+// same key, and only safe if two calls meaning different things never do.
+
+const ck = (input, settings) => canonicalizeInput(input, settings);
+
+check("key order doesn't change the key",
+  ck({ a: 1, b: 2 }), ck({ b: 2, a: 1 }));
+ok("case and surrounding space fold by default",
+  ck({ domain: " Acme.com " }) === ck({ domain: "acme.com" }),
+  "the same lookup billed twice is exactly what a cache exists to stop");
+ok("different values give different keys",
+  ck({ domain: "acme.com" }) !== ck({ domain: "acme.co" }));
+ok("array order still matters",
+  ck({ ids: [1, 2] }) !== ck({ ids: [2, 1] }));
+ok("normalisation can be turned off",
+  ck({ domain: "ACME" }, { cache_key_normalize: false }) !== ck({ domain: "acme" }, { cache_key_normalize: false }));
+ok("excluded fields don't affect the key",
+  ck({ domain: "acme.com", trace_id: "x" }, { cache_key_exclude: ["trace_id"] }) ===
+  ck({ domain: "acme.com", trace_id: "y" }, { cache_key_exclude: ["trace_id"] }));
+ok("an include list ignores everything else",
+  ck({ domain: "acme.com", extra: 1 }, { cache_key_fields: ["domain"] }) ===
+  ck({ domain: "acme.com", extra: 2 }, { cache_key_fields: ["domain"] }));
+ok("a missing value and an explicit null are the same lookup",
+  ck({ domain: "acme.com" }) === ck({ domain: "acme.com", other: null }));
+
+ok("a different owner can never share a cached answer",
+  cacheKeyMaterial({ ownerId: "u1", endpointId: "e", versionId: "v", input: { d: "x" } }) !==
+  cacheKeyMaterial({ ownerId: "u2", endpointId: "e", versionId: "v", input: { d: "x" } }),
+  "otherwise one tenant's enriched contact is served to another");
+ok("editing the waterfall invalidates on its own",
+  cacheKeyMaterial({ ownerId: "u1", endpointId: "e", versionId: "v1", input: { d: "x" } }) !==
+  cacheKeyMaterial({ ownerId: "u1", endpointId: "e", versionId: "v2", input: { d: "x" } }),
+  "the version is in the key, so there is nothing to remember to purge");
 
 console.log(`\n  passed: ${pass}`);
 if (failures.length) {

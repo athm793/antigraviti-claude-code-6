@@ -65,7 +65,7 @@ export const ENDPOINT_DDL: string[] = [
      status          TEXT        NOT NULL,
      resolved_by     TEXT,
      cache_hit       BOOLEAN     NOT NULL DEFAULT false,
-     credits_used    INTEGER     NOT NULL DEFAULT 0,
+     upstream_calls  INTEGER     NOT NULL DEFAULT 0,
      cost_cents      INTEGER     NOT NULL DEFAULT 0,
      duration_ms     INTEGER     NOT NULL DEFAULT 0,
      input           JSONB,
@@ -131,6 +131,21 @@ export const ENDPOINT_DDL: string[] = [
   // pick it up. CREATE TABLE IF NOT EXISTS alone would skip it forever.
   `ALTER TABLE endpoints
      ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NOT NULL DEFAULT 60`,
+
+  // The column was called credits_used, which it never was — it counts HTTP
+  // requests including rotation retries, not vendor credits. RENAME COLUMN has
+  // no IF EXISTS, hence the guard.
+  `DO $$ BEGIN
+     IF EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'endpoint_runs' AND column_name = 'credits_used'
+     ) AND NOT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_name = 'endpoint_runs' AND column_name = 'upstream_calls'
+     ) THEN
+       ALTER TABLE endpoint_runs RENAME COLUMN credits_used TO upstream_calls;
+     END IF;
+   END $$`,
 
   // Circular reference, so the constraint is added after both tables exist.
   // ADD CONSTRAINT is not idempotent — drop first.

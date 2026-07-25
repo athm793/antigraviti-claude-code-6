@@ -89,9 +89,9 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 - [x] Template and condition engine (no `eval`; JSON rule trees)
 - [x] Visual step builder
 - [x] Public execution endpoint, plus a test run against the unsaved draft
-- [ ] Run logs and per-provider hit rates
+- [x] Run logs and per-provider hit rates
+- [x] Result caching keyed on owner + endpoint + version + input
 - [ ] JSON view of a definition, for copy/paste and versioning
-- [ ] Result caching keyed on owner + endpoint + version + input
 - [ ] Opt-in parallel fan-out with declared-order merging
 
 Smaller gaps still open:
@@ -216,6 +216,18 @@ A step only counts as an answer if it returns 2xx **and** fills every required o
 
 Endpoint keys are shown once and stored as a SHA-256 hash — a database snapshot doesn't hand anyone a working key. Each key gets its own per-minute run limit, counted in the database, because every run buys real upstream calls.
 
+### Caching and run history
+
+Turn caching on per endpoint and a repeated lookup returns the answer you already bought, at zero upstream calls. The cache key is a hash of **owner + endpoint + definition version + input**, which means:
+
+- One tenant's enriched contact can never be served to another.
+- **Editing any step invalidates the cache on its own** — the version is in the key, so there is nothing to remember to purge. The manual purge under Settings is for the other case: the provider's data changed and yours didn't.
+- Only `success` and `partial` results are cached. A `miss` isn't: "nobody had this yesterday" shouldn't stop you asking today, since these datasets are exactly what vendors keep adding to. An `error` isn't either — it's a transient condition, and caching it would keep serving a failure long after it cleared.
+
+Run history is written by allowlist: ids, statuses, timings, counts and the condition trace. The caller's input is stored so a row is recognisable; **the result is not, unless you turn on "Save request and response bodies"**. This is contact-enrichment traffic, so logging everything by default would quietly turn a credentials product into a PII store. Retention defaults to 30 days per endpoint and is enforced by the nightly cron.
+
+The Runs tab reports two rates per step, deliberately. **Hit rate** is of the runs where that step actually ran. **Share of answers** is of every run that got an answer at all. Don't compare hit rates between steps — a later step in a waterfall only ever sees the cases everything before it missed, so it is being marked on a harder paper. Share of answers is the number that tells you what you'd lose by dropping a vendor.
+
 ---
 
 ## Agency setup guide
@@ -240,6 +252,7 @@ Point every tool in your stack at the matching KeyProxy endpoint. Add more keys 
 | `SESSION_SECRET` | Yes | 32+ byte random hex string for signing session cookies. Rotating this logs everyone out. |
 | `ENABLE_DEBUG_ROUTE` | No | Set to `true` to enable `/api/debug/...`. Off by default — the route reflects requests and responses back to the caller. |
 | `PROXY_ATTEMPT_TIMEOUT_MS` | No | Per-attempt upstream timeout. Defaults to `30000`. Raise it if a provider is legitimately slow. |
+| `CRON_SECRET` | No | Authorises the nightly cleanup at `/api/cron/prune`. Vercel sets this for you when you add it as a project env var. **Without it the route rejects everything** — run history and cache rows are then never pruned, so set it. |
 
 ---
 
@@ -269,7 +282,9 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 | GET / POST | `/api/endpoints/[id]/keys` | List or issue endpoint keys |
 | DELETE | `/api/endpoints/[id]/keys/[keyId]` | Revoke an endpoint key |
 | POST | `/api/endpoints/[id]/test` | Run an unsaved draft; nothing is persisted |
+| GET / DELETE | `/api/endpoints/[id]/cache` | Count or clear cached answers |
 | POST | `/api/run/[slug]` | **Run a waterfall.** Authenticated by `x-endpoint-key` |
+| GET | `/api/cron/prune` | Nightly cleanup. Gated on `CRON_SECRET`, fail-closed |
 | GET | `/api/health` | Health check |
 | POST | `/api/auth/setup` | One-time: create first admin |
 | POST | `/api/auth/login` | Log in |

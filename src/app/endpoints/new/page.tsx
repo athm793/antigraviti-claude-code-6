@@ -72,7 +72,7 @@ export default function NewEndpointPage() {
             &ldquo;{created.name}&rdquo; created
           </h1>
           <p className="text-[#8b8b9e] text-sm mt-1">
-            Copy your key now. It&apos;s stored encrypted, so this is the only time it can be shown.
+            Copy your key now. Only a one-way hash of it is stored, so this is the only time it can be shown.
           </p>
         </div>
 
