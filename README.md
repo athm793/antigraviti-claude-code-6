@@ -85,10 +85,11 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 
 - [x] Per-user ownership and key redaction
 - [x] Shared rotation engine with per-attempt timeouts
-- [ ] Endpoint + version schema, hashed endpoint keys
-- [ ] Template and condition engine (no `eval`; JSON rule trees)
-- [ ] Visual step builder, plus a JSON view for copy/paste and versioning
+- [x] Endpoint + version schema, hashed endpoint keys
+- [x] Template and condition engine (no `eval`; JSON rule trees)
+- [x] Visual step builder
 - [ ] Public execution endpoint, run logs and per-provider hit rates
+- [ ] JSON view of a definition, for copy/paste and versioning
 - [ ] Result caching keyed on owner + endpoint + version + input
 - [ ] Opt-in parallel fan-out with declared-order merging
 
@@ -132,6 +133,13 @@ npm run dev   # http://localhost:3000
 Generate a session secret:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Run the engine tests — templates, conditions, output mapping and request
+building. They are pure functions, so this touches no database and spends no
+API credits:
+```bash
+npm test
 ```
 
 ---
