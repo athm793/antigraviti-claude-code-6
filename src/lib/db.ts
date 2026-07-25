@@ -1,5 +1,6 @@
 import { neon, type NeonQueryFunction } from "@neondatabase/serverless";
 import { v4 as uuidv4 } from "uuid";
+import { ENDPOINT_DDL } from "./endpointSchema.sql";
 import type {
   ProxyConfig,
   ApiKey,
@@ -89,7 +90,22 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_owner ON proxy_configs(owner_user_id)`;
 
+  await initEndpointSchema(sql);
+
   schemaInitialized = true;
+}
+
+/**
+ * Aggregator tables, sent as one batched transaction rather than ~18 separate
+ * HTTP round trips. The first statement takes an advisory lock so two
+ * concurrent cold starts can't collide on `CREATE TABLE IF NOT EXISTS`, which
+ * is not race-free in Postgres.
+ */
+async function initEndpointSchema(sql: NeonQueryFunction<false, false>): Promise<void> {
+  // Verified against Neon: DDL, advisory locks and ALTER TABLE all work
+  // inside a batched HTTP transaction. The driver takes a raw statement as
+  // sql(text) — there is no sql.query().
+  await sql.transaction(ENDPOINT_DDL.map((statement) => sql(statement)));
 }
 
 function toISOString(value: unknown): string {

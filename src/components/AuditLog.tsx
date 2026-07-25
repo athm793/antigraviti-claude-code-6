@@ -1,4 +1,5 @@
 import type { AuditLogEntry } from "@/lib/types";
+import { formatDateTime } from "@/lib/format";
 
 const ACTION_LABELS: Record<string, string> = {
   keys_added: "Keys added",
@@ -33,7 +34,7 @@ export function AuditLog({ entries }: { entries: AuditLogEntry[] }) {
             )}
           </div>
           <time dateTime={entry.created_at} className="text-xs text-[#8b8b9e] shrink-0">
-            {new Date(entry.created_at).toLocaleString()}
+            {formatDateTime(entry.created_at)}
           </time>
         </li>
       ))}

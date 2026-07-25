@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { formatNumber } from "@/lib/format";
 
 /**
  * Generalises the private Stat in StatsBar.
@@ -33,7 +34,7 @@ export function StatTile({
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-[#8b8b9e] text-xs">{label}</span>
         <span className={`font-bold text-xl tabular-nums ${valueTone}`}>
-          {typeof value === "number" ? value.toLocaleString() : value}
+          {typeof value === "number" ? formatNumber(value) : value}
         </span>
       </div>
       {/* Reserved line: present whether or not there's a sub-value, so tiles

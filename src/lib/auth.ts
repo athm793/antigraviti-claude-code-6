@@ -3,7 +3,9 @@ import { cookies } from "next/headers";
 import { SESSION_COOKIE_NAME, signToken, verifyToken } from "./sessionToken";
 import { getUserById } from "./usersDb";
 import { getConfig } from "./db";
+import { getEndpoint } from "./endpointsDb";
 import type { ProxyConfig, User } from "./types";
+import type { Endpoint } from "./endpointTypes";
 
 export { SESSION_COOKIE_NAME };
 
@@ -81,6 +83,25 @@ export async function authorizeConfig(configId: string): Promise<ConfigAuth> {
   if (!canAccessConfig(user, config)) return { ok: false, status: 404 };
 
   return { ok: true, user, config };
+}
+
+export type EndpointAuth =
+  | { ok: true; user: User; endpoint: Endpoint }
+  | { ok: false; status: 401 | 403 | 404 };
+
+/** Same ownership rule as providers, applied to waterfall endpoints. */
+export async function authorizeEndpoint(endpointId: string): Promise<EndpointAuth> {
+  const user = await getCurrentUser();
+  if (!user) return { ok: false, status: 401 };
+
+  const endpoint = await getEndpoint(endpointId);
+  if (!endpoint) return { ok: false, status: 404 };
+
+  const owned =
+    endpoint.owner_user_id !== null && endpoint.owner_user_id === user.id;
+  if (!user.is_admin && !owned) return { ok: false, status: 404 };
+
+  return { ok: true, user, endpoint };
 }
 
 /** Turns a failed ConfigAuth into the response body the routes already use. */

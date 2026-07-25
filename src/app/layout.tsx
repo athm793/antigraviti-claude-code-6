@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { getCurrentUser } from "@/lib/auth";
 import { UserMenu } from "@/components/UserMenu";
+import { HeaderNav } from "@/components/HeaderNav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -36,8 +37,9 @@ export default async function RootLayout({
             </div>
             <span className="font-semibold text-white">KeyProxy</span>
           </a>
-          <span className="text-[#2a2a38] hidden lg:inline">|</span>
-          <span className="text-[#8b8b9e] text-sm hidden lg:inline">API Key Rotation Proxy</span>
+          <span className="text-[#2a2a38] hidden xl:inline">|</span>
+          <span className="text-[#8b8b9e] text-sm hidden xl:inline">API Key Rotation Proxy</span>
+          {user && <HeaderNav />}
           <UserMenu user={user} />
         </header>
         {/*

@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import { updateConfig, deleteConfig, getKeyStats } from "@/lib/db";
+import { endpointsUsingConfig } from "@/lib/endpointsDb";
 import { authorizeConfig, configAuthResponse } from "@/lib/auth";
 import { checkPublicHttpTarget, normalizeRateLimitCodes } from "@/lib/validation";
 import { checkRateLimit } from "@/lib/rateLimit";
@@ -77,6 +78,22 @@ export async function DELETE(
     const { id } = await params;
     const auth = await authorizeConfig(id);
     if (!auth.ok) return configAuthResponse(auth.status);
+
+    // Waterfall steps reference providers from inside a JSONB definition, so
+    // there is no foreign key to stop this. Without the guard, deleting a
+    // provider silently breaks every endpoint that used it, and the failure
+    // only shows up on the next paid run.
+    const usedBy = await endpointsUsingConfig(id);
+    if (usedBy.length > 0) {
+      const names = usedBy.map((e) => `"${e.name}"`).join(", ");
+      return Response.json(
+        {
+          error: `This provider is used by ${usedBy.length} endpoint${usedBy.length === 1 ? "" : "s"} (${names}). Remove those steps first.`,
+          usedBy,
+        },
+        { status: 409 }
+      );
+    }
 
     await deleteConfig(id);
     return new Response(null, { status: 204 });

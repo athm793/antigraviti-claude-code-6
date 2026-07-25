@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ApiKeyView, KeyStatus } from "@/lib/types";
+import { formatDateTime, formatNumber } from "@/lib/format";
 import { ConfirmModal } from "./ConfirmModal";
 import { Trash, Spinner } from "./ui/Icon";
 import {
@@ -98,11 +99,11 @@ export function KeysTable({
                 <StatusBadge status={key.status} />
               </td>
               <td className={`${tableTdCls} text-right text-[#8b8b9e] tabular-nums`}>
-                {key.request_count.toLocaleString()}
+                {formatNumber(key.request_count)}
               </td>
               <td className={`${tableTdCls} text-[#8b8b9e] text-xs tabular-nums`}>
                 {key.exhausted_at
-                  ? new Date(key.exhausted_at).toLocaleString()
+                  ? formatDateTime(key.exhausted_at)
                   : "—"}
               </td>
               <td className="py-3">

@@ -1,4 +1,5 @@
 import { ArrowLeft, ArrowRight } from "./Icon";
+import { formatNumber } from "@/lib/format";
 
 export const DEFAULT_PAGE_SIZE = 15;
 
@@ -41,8 +42,8 @@ export function Pagination({
   return (
     <div className="flex items-center justify-between gap-4 pt-2">
       <p className="text-xs text-[#8b8b9e] tabular-nums">
-        Showing {from.toLocaleString()}–{to.toLocaleString()} of{" "}
-        {total.toLocaleString()} {label}
+        Showing {formatNumber(from)}–{formatNumber(to)} of{" "}
+        {formatNumber(total)} {label}
       </p>
 
       <div className="flex items-center gap-2">
