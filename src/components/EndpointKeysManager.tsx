@@ -183,7 +183,7 @@ export function EndpointKeysManager({
                 onClick={() => setConfirmRevoke(record)}
                 disabled={Boolean(record.revoked_at) || revoking === record.id}
                 aria-label={`Revoke key ${record.label || record.key_id}`}
-                title={record.revoked_at ? "Already revoked" : "Revoke key"}
+                data-tip={record.revoked_at ? "Already revoked" : "Revoke key"}
                 className={`${btnIconDanger} disabled:opacity-30 disabled:cursor-not-allowed`}
               >
                 {revoking === record.id ? (

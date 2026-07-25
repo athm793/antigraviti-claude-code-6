@@ -2,6 +2,7 @@ import type { RunLogRow } from "@/lib/runLog";
 import { RUN_STATUS_LABELS, RUN_STATUS_TONES, toneClass } from "@/lib/runStatus";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { Pagination } from "./ui/Pagination";
+import { SortableTh, type SortDir } from "./ui/SortableTh";
 import {
   badgeBase,
   cardCls,
@@ -27,6 +28,8 @@ export function RunsTable({
   page,
   pageSize,
   status,
+  sort,
+  dir,
 }: {
   endpointId: string;
   runs: RunLogRow[];
@@ -34,7 +37,41 @@ export function RunsTable({
   page: number;
   pageSize: number;
   status: string;
+  sort: string;
+  dir: SortDir;
 }) {
+  /**
+   * Sorting, filtering and paging all live in the URL, composed here so a
+   * sort click keeps the filter and a page click keeps the sort. Changing the
+   * sort resets to page 1 — page 3 of a different ordering is meaningless.
+   */
+  function href(over: { page?: number; sort?: string; dir?: SortDir }) {
+    const params = new URLSearchParams();
+    const nextPage = over.page ?? 1;
+    if (nextPage > 1) params.set("page", String(nextPage));
+    if (status !== "all") params.set("status", status);
+    const nextSort = over.sort ?? sort;
+    const nextDir = over.dir ?? dir;
+    if (nextSort !== "when" || nextDir !== "desc") {
+      params.set("sort", nextSort);
+      params.set("dir", nextDir);
+    }
+    const qs = params.toString();
+    return `/endpoints/${endpointId}/runs${qs ? `?${qs}` : ""}`;
+  }
+
+  const sortable = (label: string, key: string, className: string, align?: "right") => (
+    <SortableTh
+      label={label}
+      sortKey={key}
+      currentSort={sort}
+      currentDir={dir}
+      hrefFor={(k, d) => href({ sort: k, dir: d })}
+      align={align}
+      className={className}
+    />
+  );
+
   return (
     <div className={cardCls}>
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -46,12 +83,14 @@ export function RunsTable({
         <table className="w-full text-sm">
           <thead>
             <tr className={tableHeadRowCls}>
-              <th scope="col" className={`${tableThCls} w-44`}>When</th>
+              {sortable("When", "when", "w-44")}
+              {/* Input is free-form JSON — there is no ordering of it anyone
+                  means, so it stays a plain header. */}
               <th scope="col" className={tableThCls}>Input</th>
-              <th scope="col" className={`${tableThCls} w-40`}>Answered by</th>
-              <th scope="col" className={`${tableThCls} w-24 text-right`}>Calls</th>
-              <th scope="col" className={`${tableThCls} w-24 text-right`}>Time</th>
-              <th scope="col" className={`${tableThCls} w-36`}>Result</th>
+              {sortable("Answered by", "resolved_by", "w-40")}
+              {sortable("Calls", "calls", "w-24", "right")}
+              {sortable("Time", "time", "w-24", "right")}
+              {sortable("Result", "status", "w-36")}
             </tr>
           </thead>
           <tbody>
@@ -110,9 +149,7 @@ export function RunsTable({
         pageSize={pageSize}
         total={total}
         label="runs"
-        hrefFor={(next) =>
-          `/endpoints/${endpointId}/runs?page=${next}${status !== "all" ? `&status=${status}` : ""}`
-        }
+        hrefFor={(next) => href({ page: next })}
       />
     </div>
   );

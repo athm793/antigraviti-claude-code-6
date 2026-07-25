@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { authorizeEndpoint } from "@/lib/auth";
-import { listRuns } from "@/lib/runLog";
+import { listRuns, RUN_SORTS } from "@/lib/runLog";
 import { getEndpointAnalytics } from "@/lib/runAnalytics";
 import { RunsTable } from "@/components/RunsTable";
 import { ProviderPerformance } from "@/components/ProviderPerformance";
@@ -19,7 +19,7 @@ export default async function RunsTab({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ page?: string; status?: string }>;
+  searchParams: Promise<{ page?: string; status?: string; sort?: string; dir?: string }>;
 }) {
   const { id } = await params;
   const auth = await authorizeEndpoint(id);
@@ -27,15 +27,20 @@ export default async function RunsTab({
 
   const query = await searchParams;
   const page = Math.max(1, Number(query.page) || 1);
-  // Checked against a fixed set rather than passed through: it reaches a WHERE
-  // clause, and an unrecognised value should mean "all", not an error.
+  // Checked against fixed sets rather than passed through: these reach WHERE
+  // and ORDER BY clauses, and an unrecognised value should mean the default,
+  // not an error.
   const status = VALID_STATUSES.has(query.status ?? "") ? query.status! : "all";
+  const sort = query.sort && query.sort in RUN_SORTS ? query.sort : "when";
+  const dir = query.dir === "asc" ? ("asc" as const) : ("desc" as const);
 
   const [{ rows, total }, analytics] = await Promise.all([
     listRuns(id, {
       limit: DEFAULT_PAGE_SIZE,
       offset: (page - 1) * DEFAULT_PAGE_SIZE,
       status,
+      sort,
+      dir,
     }),
     getEndpointAnalytics(id, 30),
   ]);
@@ -97,6 +102,8 @@ export default async function RunsTab({
         page={page}
         pageSize={DEFAULT_PAGE_SIZE}
         status={status}
+        sort={sort}
+        dir={dir}
       />
     </div>
   );

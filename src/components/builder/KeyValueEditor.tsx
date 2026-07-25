@@ -54,7 +54,7 @@ export function KeyValueEditor({
             type="button"
             onClick={() => onChange(rows.filter((_, i) => i !== index))}
             aria-label={`Remove ${row.key || "row"}`}
-            title="Remove"
+            data-tip="Remove"
             className={btnIcon}
           >
             <X className="w-4 h-4" />

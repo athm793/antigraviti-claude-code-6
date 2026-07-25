@@ -33,14 +33,16 @@ export function Pagination({
   const hasNext = current < pages;
 
   const stepCls =
-    "min-h-[44px] min-w-[44px] px-3 inline-flex items-center gap-1.5 text-sm rounded-lg border transition-colors";
+    "min-h-[44px] min-w-[44px] px-3 inline-flex items-center gap-1.5 text-sm rounded-lg border transition-colors kp-press focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00C4B4]/60";
   const enabled =
     "bg-[#0a0a10] text-[#c8c8d8] border-[#2a2a38] hover:bg-[#15151f] hover:border-[#363650]";
   const disabled =
     "bg-[#0a0a10] text-[#4a4a58] border-[#2a2a38] pointer-events-none";
 
   return (
-    <div className="flex items-center justify-between gap-4 pt-2">
+    // flex-wrap plus icon-only steps below sm: the full footer is 381px of
+    // content, which is 6px too wide for a 375px phone.
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-2">
       <p className="text-xs text-[#8b8b9e] tabular-nums">
         Showing {formatNumber(from)}–{formatNumber(to)} of{" "}
         {formatNumber(total)} {label}
@@ -50,10 +52,11 @@ export function Pagination({
         <a
           href={hasPrev ? hrefFor(current - 1) : undefined}
           aria-disabled={!hasPrev}
+          aria-label="Previous page"
           className={`${stepCls} ${hasPrev ? enabled : disabled}`}
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Previous
+          <span className="hidden sm:inline">Previous</span>
         </a>
         <span className="text-xs text-[#8b8b9e] tabular-nums min-w-[5rem] text-center">
           Page {current} of {pages}
@@ -61,9 +64,10 @@ export function Pagination({
         <a
           href={hasNext ? hrefFor(current + 1) : undefined}
           aria-disabled={!hasNext}
+          aria-label="Next page"
           className={`${stepCls} ${hasNext ? enabled : disabled}`}
         >
-          Next
+          <span className="hidden sm:inline">Next</span>
           <ArrowRight className="w-3.5 h-3.5" />
         </a>
       </div>

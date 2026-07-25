@@ -45,8 +45,30 @@ export function Popover({
 
   useEffect(() => setMounted(true), []);
 
+  /**
+   * The panel outlives `open` by one short exit animation, so dismissing a
+   * dropdown fades it out instead of snapping it away. Reduced motion cuts
+   * the animation to ~0ms globally, making the delay imperceptible.
+   */
+  const [visible, setVisible] = useState(open);
+  const [closing, setClosing] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setVisible(true);
+      setClosing(false);
+      return;
+    }
+    if (!visible) return;
+    setClosing(true);
+    const timer = setTimeout(() => {
+      setVisible(false);
+      setClosing(false);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [open, visible]);
+
   useLayoutEffect(() => {
-    if (!open) return;
+    if (!visible) return;
 
     function position() {
       const anchor = anchorRef.current;
@@ -70,9 +92,9 @@ export function Popover({
       window.removeEventListener("scroll", position, true);
       window.removeEventListener("resize", position);
     };
-  }, [open, anchorRef, maxHeight]);
+  }, [visible, anchorRef, maxHeight]);
 
-  if (!mounted || !open || !rect) return null;
+  if (!mounted || !visible || !rect) return null;
 
   return createPortal(
     <div
@@ -92,7 +114,9 @@ export function Popover({
         maxHeight,
         zIndex: 60,
       }}
-      className={`overflow-y-auto bg-[#111118] border border-[#2a2a38] rounded-lg shadow-xl shadow-black/40 py-1 ${className}`}
+      className={`overflow-y-auto bg-[#111118] border border-[#2a2a38] rounded-lg shadow-xl shadow-black/40 py-1 ${
+        closing ? "kp-panel-out" : "kp-panel-in"
+      } ${className}`}
     >
       {children}
     </div>,

@@ -300,12 +300,12 @@ function UserRow({
               {user.name || user.email}
             </span>
             {user.is_admin && (
-              <span className="text-[10px] font-bold uppercase tracking-wide text-[#00C4B4] bg-[#00C4B4]/15 px-2 py-0.5 rounded-full">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-black bg-[#00C4B4] px-2 py-0.5 rounded-full">
                 Admin
               </span>
             )}
             {isSelf && (
-              <span className="text-[10px] font-bold uppercase tracking-wide text-[#8b8b9e] bg-[#1a1a28] px-2 py-0.5 rounded-full">
+              <span className="text-[10px] font-bold uppercase tracking-wide text-[#c8c8d8] bg-[#2a2a38] px-2 py-0.5 rounded-full">
                 You
               </span>
             )}
@@ -330,7 +330,7 @@ function UserRow({
           <button
             onClick={handleToggleAdmin}
             disabled={busy || (user.is_admin && isLastAdmin)}
-            title={user.is_admin && isLastAdmin ? "Can't remove the last admin" : undefined}
+            data-tip={user.is_admin && isLastAdmin ? "Can't remove the last admin" : undefined}
             className="text-sm bg-[#0a0a10] hover:bg-[#15151f] text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-3 min-h-[44px] rounded-lg transition-colors disabled:opacity-50"
           >
             {user.is_admin ? "Remove Admin" : "Make Admin"}
@@ -338,7 +338,7 @@ function UserRow({
           <button
             onClick={() => setConfirmOpen(true)}
             disabled={busy || isSelf || (user.is_admin && isLastAdmin)}
-            title={
+            data-tip={
               isSelf
                 ? "You can't delete your own account"
                 : user.is_admin && isLastAdmin

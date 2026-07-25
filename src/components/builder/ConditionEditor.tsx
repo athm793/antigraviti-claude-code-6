@@ -188,7 +188,7 @@ export function ConditionEditor({
               type="button"
               onClick={() => emit(combinator, leaves.filter((_, i) => i !== index))}
               aria-label="Remove this condition"
-              title="Remove condition"
+              data-tip="Remove condition"
               className={btnIcon}
             >
               <X className="w-4 h-4" />

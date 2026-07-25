@@ -358,16 +358,22 @@ export function EndpointBuilder({
             Add step
           </button>
         )}
-        <button
-          type="button"
-          onClick={save}
-          disabled={saving || !dirty || errorCount > 0}
-          title={errorCount > 0 ? "Fix the highlighted problems first" : undefined}
-          className={`${btnPrimary} gap-2 min-w-[9.5rem]`}
+        {/* Tip on a wrapper — a disabled button swallows the tooltip's mouse
+            events, and disabled is exactly when the reason matters. */}
+        <span
+          data-tip={errorCount > 0 ? "Fix the highlighted problems first" : undefined}
+          className="inline-flex"
         >
-          {saving && <Spinner className="w-4 h-4" />}
-          {saving ? "Saving…" : "Save waterfall"}
-        </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={saving || !dirty || errorCount > 0}
+            className={`${btnPrimary} gap-2 min-w-[9.5rem]`}
+          >
+            {saving && <Spinner className="w-4 h-4" />}
+            {saving ? "Saving…" : "Save waterfall"}
+          </button>
+        </span>
       </div>
 
       {saveError && <p className={errorBoxCls}>{saveError}</p>}

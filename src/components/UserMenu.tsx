@@ -22,10 +22,10 @@ export function UserMenu({ user }: { user: User | null }) {
 
   return (
     <div className="ml-auto flex items-center gap-3 text-sm">
-      <span className="text-[#8b8b9e] hidden sm:inline" title={user.email}>
+      <span className="text-[#8b8b9e] hidden sm:inline" data-tip={user.email}>
         {user.name || user.email}
         {user.is_admin && (
-          <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-[#00C4B4] bg-[#00C4B4]/15 px-1.5 py-0.5 rounded-full">
+          <span className="ml-1.5 text-[10px] font-bold uppercase tracking-wide text-black bg-[#00C4B4] px-1.5 py-0.5 rounded-full">
             Admin
           </span>
         )}
@@ -33,15 +33,18 @@ export function UserMenu({ user }: { user: User | null }) {
       {user.is_admin && (
         <a
           href="/admin/users"
-          className="text-[#c8c8d8] hover:text-white transition-colors min-h-[44px] inline-flex items-center"
+          className="text-[#c8c8d8] hover:text-white transition-colors min-h-[44px] inline-flex items-center kp-press"
         >
-          Manage Users
+          {/* Short label on phones — "Manage Users" is what pushed the header
+              past the viewport at 375px. */}
+          <span className="hidden sm:inline">Manage Users</span>
+          <span className="sm:hidden">Users</span>
         </a>
       )}
       <button
         onClick={handleLogout}
         disabled={signingOut}
-        className="text-[#c8c8d8] hover:text-white border border-[#2a2a38] hover:border-[#363650] rounded-lg px-3 min-h-[44px] transition-colors disabled:opacity-50"
+        className="text-[#c8c8d8] hover:text-white border border-[#2a2a38] hover:border-[#363650] rounded-lg px-3 min-h-[44px] transition-colors disabled:opacity-50 kp-press"
       >
         {signingOut ? "Signing out…" : "Sign out"}
       </button>

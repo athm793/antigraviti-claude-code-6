@@ -14,6 +14,22 @@
 
 <div class="log-entry">
   <div class="date">25 Jul 2026</div>
+  <h3>Phase 9 — UI/UX modernization sweep <span class="status done">Shipped</span></h3>
+  <ul>
+    <li><strong>Token layer:</strong> tabular-nums set once on <code>body</code>; a small motion system (<code>kp-fade/kp-pop</code> keyframes) with a global <code>prefers-reduced-motion</code> neutralizer; press feedback (<code>kp-press</code>) + focus-visible outlines on every shared button class; icon buttons gained hover backgrounds.</li>
+    <li><strong>Overlays animate in AND out:</strong> ConfirmModal and Popover outlive their close by one ~100ms exit animation instead of snapping away.</li>
+    <li><strong>On-design tooltips:</strong> one delegated <code>TooltipLayer</code> (portal, flips, hover AND keyboard focus) driven by <code>data-tip</code>; 26 native <code>title=</code> tooltips converted. Disabled-reason tips sit on wrapper spans because disabled buttons swallow mouse events.</li>
+    <li><strong>Solid pills:</strong> <code>badgeTones</code> switched from alpha tints to solid fills with contrast-correct text; role chips and the rate-limit code chip converted with them.</li>
+    <li><strong>Every runs column sortable, server-side:</strong> ORDER BY from a literal allowlist (status sorts by lifecycle, not alphabet); sort/filter/page compose in the URL; verified live (684→1,011→1,187→1,741ms ascending).</li>
+    <li><strong>KeysTable pagination</strong> at 15/page (client-side over the already-loaded list, footer only when needed).</li>
+    <li><strong>Mobile defects measured and fixed:</strong> header overflowed to 633px at 375 (now wraps, short labels); ConfigCard stat tiles to 440px (min-w-0); pagination footer 381px (wraps, icon-only steps); builder step rows and Method/Path grid now wrap/stack.</li>
+    <li><strong>Caught by the sweep:</strong> Manage Users copy still claimed "there are no per-config permissions" — false since Phase 0's ownership model. Fixed.</li>
+    <li>Login/setup submit buttons moved onto the shared button class. Gate run on the live DOM: no console errors, no color-mix, tsc/lint/134 tests/build clean.</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
   <h3>Phase 8 — polish: version history, used-by counts, brain folder <span class="status done">Shipped</span></h3>
   <ul>
     <li>Version history on Settings with restore-as-append (<code>/api/endpoints/[id]/versions</code>); Live badge and Restore share one fixed-width slot.</li>

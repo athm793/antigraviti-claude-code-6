@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { getCurrentUser } from "@/lib/auth";
 import { UserMenu } from "@/components/UserMenu";
 import { HeaderNav } from "@/components/HeaderNav";
+import { TooltipLayer } from "@/components/ui/TooltipLayer";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,7 +31,9 @@ export default async function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-[#08080f] text-white`}>
-        <header className="border-b border-[#1a1a28] px-6 py-4 flex items-center gap-3">
+        {/* flex-wrap: on a phone the nav drops to its own row instead of
+            pushing the user menu off the right edge of the screen. */}
+        <header className="border-b border-[#1a1a28] px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-x-3 gap-y-1">
           <a href="/" className="flex items-center gap-2.5 no-underline min-h-[44px]">
             <div className="w-7 h-7 rounded-md bg-[#00C4B4] flex items-center justify-center text-black font-bold text-sm">
               K
@@ -48,6 +51,7 @@ export default async function RootLayout({
           while the list pages stay readable at max-w-5xl.
         */}
         <main className="px-6 py-8">{children}</main>
+        <TooltipLayer />
       </body>
     </html>
   );

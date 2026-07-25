@@ -19,4 +19,59 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  /*
+   * Fixed-width digits everywhere, set once at the root. Counts, dates,
+   * latencies and costs change constantly in this UI, and proportional
+   * digits make every change nudge its neighbours sideways.
+   */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --- Motion -------------------------------------------------------------
+ * One small system: overlays fade+pop in and out, controls get press
+ * feedback. Durations are short enough to read as responsiveness, not
+ * decoration.
+ */
+@keyframes kp-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes kp-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes kp-pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes kp-pop-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+
+.kp-overlay-in  { animation: kp-fade-in 120ms ease-out; }
+.kp-overlay-out { animation: kp-fade-out 100ms ease-in forwards; }
+.kp-panel-in    { animation: kp-pop-in 140ms cubic-bezier(0.2, 0.9, 0.3, 1); }
+.kp-panel-out   { animation: kp-pop-out 100ms ease-in forwards; }
+
+/*
+ * Press feedback for every interactive control, applied via the shared
+ * classes in lib/ui.ts. A button with no reaction to being pressed feels
+ * dead regardless of its hover state.
+ */
+.kp-press:active:not(:disabled) { transform: scale(0.98); }
+
+/*
+ * Reduced motion neutralizes the lot — animations AND the transform-based
+ * press. Colour transitions are cut to imperceptible rather than removed so
+ * :hover/:focus states still land instantly.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .kp-press:active:not(:disabled) { transform: none; }
 }

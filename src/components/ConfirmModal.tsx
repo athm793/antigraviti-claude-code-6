@@ -1,6 +1,10 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { btnDanger, btnSecondary } from "@/lib/ui";
+
+/** How long the exit animation runs before the modal actually unmounts. */
+const EXIT_MS = 100;
 
 export function ConfirmModal({
   open,
@@ -19,6 +23,29 @@ export function ConfirmModal({
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
 
+  /**
+   * Mounted outlives `open` by one exit animation: an overlay that vanishes
+   * the frame it's dismissed reads as the app flinching. Under reduced motion
+   * the animations are globally cut to ~0ms, so the delay is imperceptible.
+   */
+  const [mounted, setMounted] = useState(open);
+  const [closing, setClosing] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      setClosing(false);
+      return;
+    }
+    if (!mounted) return;
+    setClosing(true);
+    const timer = setTimeout(() => {
+      setMounted(false);
+      setClosing(false);
+    }, EXIT_MS);
+    return () => clearTimeout(timer);
+  }, [open, mounted]);
+
   useEffect(() => {
     if (!open) return;
     cancelRef.current?.focus();
@@ -30,11 +57,13 @@ export function ConfirmModal({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [open, onCancel]);
 
-  if (!open) return null;
+  if (!mounted) return null;
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 ${
+        closing ? "kp-overlay-out" : "kp-overlay-in"
+      }`}
       onClick={onCancel}
     >
       <div
@@ -42,7 +71,9 @@ export function ConfirmModal({
         aria-modal="true"
         aria-labelledby="confirm-modal-title"
         aria-describedby="confirm-modal-message"
-        className="bg-[#111118] border border-[#2a2a38] rounded-xl p-6 max-w-sm w-full flex flex-col gap-4"
+        className={`bg-[#111118] border border-[#2a2a38] rounded-xl p-6 max-w-sm w-full flex flex-col gap-4 ${
+          closing ? "kp-panel-out" : "kp-panel-in"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="confirm-modal-title" className="text-base font-semibold text-white">
@@ -52,17 +83,10 @@ export function ConfirmModal({
           {message}
         </p>
         <div className="flex justify-end gap-2">
-          <button
-            ref={cancelRef}
-            onClick={onCancel}
-            className="text-sm bg-[#0a0a10] hover:bg-[#15151f] text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors"
-          >
+          <button ref={cancelRef} onClick={onCancel} className={btnSecondary}>
             Cancel
           </button>
-          <button
-            onClick={onConfirm}
-            className="text-sm bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/30 px-4 min-h-[44px] rounded-lg transition-colors"
-          >
+          <button onClick={onConfirm} className={btnDanger}>
             {confirmLabel}
           </button>
         </div>

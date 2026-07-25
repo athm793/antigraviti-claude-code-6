@@ -224,15 +224,21 @@ export function JsonView({
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={apply}
-          disabled={!dirty || Boolean(liveError)}
-          title={liveError ? "Fix the JSON first" : !dirty ? "Nothing to apply" : undefined}
-          className={`${btnPrimary} gap-2 min-w-[9rem]`}
+        {/* Tip on a wrapper — a disabled button swallows the tooltip's mouse
+            events, and disabled is exactly when the reason matters. */}
+        <span
+          data-tip={liveError ? "Fix the JSON first" : !dirty ? "Nothing to apply" : undefined}
+          className="inline-flex"
         >
-          Apply to builder
-        </button>
+          <button
+            type="button"
+            onClick={apply}
+            disabled={!dirty || Boolean(liveError)}
+            className={`${btnPrimary} gap-2 min-w-[9rem]`}
+          >
+            Apply to builder
+          </button>
+        </span>
         <button
           type="button"
           onClick={() => {

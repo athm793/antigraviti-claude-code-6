@@ -100,7 +100,7 @@ export function InputSchemaEditor({
                       type="button"
                       onClick={() => onChange(inputs.filter((_, i) => i !== index))}
                       aria-label={`Remove ${field.name || "input"}`}
-                      title="Remove input"
+                      data-tip="Remove input"
                       className={btnIcon}
                     >
                       <X className="w-4 h-4" />

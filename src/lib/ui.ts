@@ -35,23 +35,26 @@ export const cardHoverCls =
 
 export const insetCls = "bg-[#0a0a10] border border-[#2a2a38] rounded-lg";
 
-export const btnPrimary =
-  "bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center";
+/**
+ * Every button gets the same three states beyond hover: kp-press (scale on
+ * :active, neutralized under reduced motion), a focus-visible outline for
+ * keyboard users, and a hover background swap on the icon variants — a
+ * control that only changes text colour on hover reads as maybe-disabled.
+ */
+const btnFocus =
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00C4B4]/60";
 
-export const btnSecondary =
-  "text-sm bg-[#0a0a10] hover:bg-[#15151f] disabled:opacity-50 disabled:cursor-not-allowed text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center";
+export const btnPrimary = `bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
 
-export const btnDanger =
-  "text-sm bg-red-500/15 hover:bg-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 border border-red-500/30 px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center";
+export const btnSecondary = `text-sm bg-[#0a0a10] hover:bg-[#15151f] disabled:opacity-50 disabled:cursor-not-allowed text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
 
-export const btnGhostBrand =
-  "bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center";
+export const btnDanger = `text-sm bg-red-500/15 hover:bg-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 border border-red-500/30 px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400/60`;
 
-export const btnIcon =
-  "text-[#8b8b9e] hover:text-white transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded shrink-0";
+export const btnGhostBrand = `bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
 
-export const btnIconDanger =
-  "text-[#8b8b9e] hover:text-red-400 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded shrink-0";
+export const btnIcon = `text-[#8b8b9e] hover:text-white hover:bg-[#15151f] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg shrink-0 kp-press ${btnFocus}`;
+
+export const btnIconDanger = `text-[#8b8b9e] hover:text-red-400 hover:bg-red-500/10 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg shrink-0 kp-press focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400/60`;
 
 export const labelCls = "text-sm font-medium text-[#c8c8d8]";
 export const hintCls = "text-xs text-[#8b8b9e]";
@@ -64,11 +67,18 @@ export const errorBoxCls =
 export const badgeBase =
   "inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border";
 
+/**
+ * Solid fills, deliberately. A status pill exists to be read at a glance, and
+ * a low-alpha wash over a dark page reads as "not finished loading" rather
+ * than as a state. Text colours are picked for contrast on each solid:
+ * black on the brand teal and amber, white on the red, light grey on the
+ * neutral slate.
+ */
 export const badgeTones = {
-  brand: "bg-[#00C4B4]/15 text-[#00C4B4] border-[#00C4B4]/25",
-  danger: "bg-red-500/15 text-red-400 border-red-500/25",
-  warning: "bg-amber-500/15 text-amber-400 border-amber-500/25",
-  neutral: "bg-[#0a0a10] text-[#8b8b9e] border-[#2a2a38]",
+  brand: "bg-[#00C4B4] text-black border-[#00C4B4] font-semibold",
+  danger: "bg-[#dc2626] text-white border-[#dc2626] font-semibold",
+  warning: "bg-[#d97706] text-black border-[#d97706] font-semibold",
+  neutral: "bg-[#2a2a38] text-[#c8c8d8] border-[#2a2a38]",
 } as const;
 
 export type BadgeTone = keyof typeof badgeTones;

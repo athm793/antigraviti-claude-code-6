@@ -97,15 +97,17 @@ export function StepCard({
         hasIssues || missingProvider ? "border-red-500/30" : "border-[#2a2a38]"
       } ${step.enabled ? "" : "opacity-60"}`}
     >
-      {/* Collapsed row: reads as a sentence top to bottom down the list. */}
-      <div className="flex items-center gap-2 px-2 min-h-[64px]">
+      {/* Collapsed row: reads as a sentence top to bottom down the list.
+          flex-wrap so the action cluster drops below the title on a phone
+          instead of pushing past the viewport. */}
+      <div className="flex flex-wrap items-center gap-2 px-2 min-h-[64px]">
         <div className="flex flex-col shrink-0">
           <button
             type="button"
             onClick={() => onMove(-1)}
             disabled={index === 0}
             aria-label={`Move ${step.name} earlier`}
-            title="Move earlier"
+            data-tip="Move earlier"
             className="w-6 h-5 flex items-center justify-center text-[#8b8b9e] hover:text-white disabled:opacity-20 disabled:cursor-not-allowed"
           >
             <ChevronUp className="w-3.5 h-3.5" />
@@ -115,7 +117,7 @@ export function StepCard({
             onClick={() => onMove(1)}
             disabled={index === total - 1}
             aria-label={`Move ${step.name} later`}
-            title="Move later"
+            data-tip="Move later"
             className="w-6 h-5 flex items-center justify-center text-[#8b8b9e] hover:text-white disabled:opacity-20 disabled:cursor-not-allowed"
           >
             <ChevronDown className="w-3.5 h-3.5" />
@@ -154,7 +156,7 @@ export function StepCard({
         <div className="w-[7.5rem] shrink-0 hidden md:flex justify-end">
           {result && (
             <span
-              title={
+              data-tip={
                 result.skip_reason ??
                 result.error?.detail ??
                 `${result.latency_ms} ms · ${result.http_status ?? "no response"}`
@@ -176,7 +178,7 @@ export function StepCard({
           type="button"
           onClick={onDuplicate}
           aria-label={`Duplicate ${step.name}`}
-          title="Duplicate step"
+          data-tip="Duplicate step"
           className={btnIcon}
         >
           <Copy className="w-4 h-4" />
@@ -185,7 +187,7 @@ export function StepCard({
           type="button"
           onClick={onDelete}
           aria-label={`Delete ${step.name}`}
-          title="Delete step"
+          data-tip="Delete step"
           className={btnIconDanger}
         >
           <Trash className="w-4 h-4" />
@@ -267,12 +269,12 @@ export function StepCard({
                     badge:
                       p.stats.active === 0 ? (
                         <span
-                          title="No active keys in this provider's pool"
+                          data-tip="No active keys in this provider's pool"
                           className="w-2 h-2 rounded-full bg-red-400 shrink-0"
                         />
                       ) : (
                         <span
-                          title={`${p.stats.active} active keys`}
+                          data-tip={`${p.stats.active} active keys`}
                           className="w-2 h-2 rounded-full bg-[#00C4B4] shrink-0"
                         />
                       ),
@@ -295,7 +297,7 @@ export function StepCard({
               </div>
             </div>
 
-            <div className="grid grid-cols-[8rem_1fr] gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-[8rem_1fr] gap-3">
               <div className="flex flex-col gap-1.5">
                 <span className={labelCls}>Method</span>
                 <Select

@@ -146,16 +146,20 @@ export function TestRunPanel({
       )}
 
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={run}
-          disabled={running || Boolean(blocked)}
-          title={blocked || undefined}
-          className={`${btnPrimary} gap-2 min-w-[9rem]`}
-        >
-          {running ? <Spinner className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-          {running ? "Running…" : "Run test"}
-        </button>
+        {/* The tip lives on a wrapper: a disabled button swallows the mouse
+            events the tooltip listens for, and the disabled state is exactly
+            when the explanation is needed. */}
+        <span data-tip={blocked || undefined} className="inline-flex">
+          <button
+            type="button"
+            onClick={run}
+            disabled={running || Boolean(blocked)}
+            className={`${btnPrimary} gap-2 min-w-[9rem]`}
+          >
+            {running ? <Spinner className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+            {running ? "Running…" : "Run test"}
+          </button>
+        </span>
         {/* Fixed slot, so the result appearing can't shove the button around. */}
         <div className="min-h-[22px] flex items-center gap-2 text-xs">
           {result && (
@@ -314,7 +318,7 @@ function StepRow({ step }: { step: StepTrace }) {
         </span>
         <span
           className={`${badgeBase} ${toneClass(STEP_STATUS_TONES[step.status])} w-[7.5rem] justify-center shrink-0`}
-          title={detail ?? undefined}
+          data-tip={detail ?? undefined}
         >
           {STEP_STATUS_LABELS[step.status]}
         </span>

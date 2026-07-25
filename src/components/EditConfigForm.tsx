@@ -100,7 +100,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
               {config.rate_limit_codes.map((code) => (
                 <span
                   key={code}
-                  className="bg-red-500/10 text-red-400 border border-red-500/20 text-xs px-2 py-0.5 rounded font-mono"
+                  className="bg-[#dc2626] text-white text-xs px-2 py-0.5 rounded font-mono font-semibold"
                 >
                   {code}
                 </span>

@@ -145,25 +145,66 @@ function toISO(value: unknown): string {
   return value instanceof Date ? value.toISOString() : new Date(value as string).toISOString();
 }
 
+/**
+ * Sort keys are a fixed allowlist mapped to literal ORDER BY fragments — the
+ * value from the URL never reaches the SQL. Sorting happens here, not on the
+ * fetched page: a client-side sort of page 2 would only reorder those 15 rows,
+ * which reads as sorted and lies.
+ *
+ * `status` orders by lifecycle severity, not alphabetically — "Answered,
+ * error, miss, partial" is an alphabetised list, not an ordering anyone means.
+ */
+export const RUN_SORTS: Record<string, string> = {
+  when: "r.created_at",
+  resolved_by: "resolved_by_name",
+  calls: "r.upstream_calls",
+  time: "r.duration_ms",
+  status: `CASE r.status
+    WHEN 'success' THEN 0 WHEN 'partial' THEN 1
+    WHEN 'miss' THEN 2 WHEN 'error' THEN 3 ELSE 4 END`,
+};
+
 export async function listRuns(
   endpointId: string,
-  options: { limit: number; offset: number; status?: string }
+  options: {
+    limit: number;
+    offset: number;
+    status?: string;
+    sort?: string;
+    dir?: "asc" | "desc";
+  }
 ): Promise<{ rows: RunLogRow[]; total: number }> {
   const sql = getSQL();
   const status = options.status && options.status !== "all" ? options.status : null;
 
-  const [rows, counted] = await Promise.all([
-    sql`
+  const sortExpr = RUN_SORTS[options.sort ?? ""] ?? RUN_SORTS.when;
+  const dir = options.dir === "asc" ? "ASC" : "DESC";
+
+  // The driver is tagged-template only, so the ORDER BY is spliced by
+  // synthesizing the template parts. This stays injection-safe because
+  // `sortExpr` and `dir` are looked up from literal maps above — the caller's
+  // strings choose WHICH literal is used and are never themselves used.
+  const parts = [
+    `
       SELECT r.*,
              (SELECT COUNT(*) FROM endpoint_run_steps s WHERE s.run_id = r.id)::int AS step_count,
              (SELECT s.config_name FROM endpoint_run_steps s
                WHERE s.run_id = r.id AND s.step_key = r.resolved_by LIMIT 1)      AS resolved_by_name
       FROM endpoint_runs r
-      WHERE r.endpoint_id = ${endpointId}
-        AND (${status}::text IS NULL OR r.status = ${status})
-      ORDER BY r.created_at DESC
-      LIMIT ${options.limit} OFFSET ${options.offset}
-    `,
+      WHERE r.endpoint_id = `,
+    `
+        AND (`,
+    `::text IS NULL OR r.status = `,
+    `)
+      ORDER BY ${sortExpr} ${dir} NULLS LAST, r.created_at DESC
+      LIMIT `,
+    ` OFFSET `,
+    ``,
+  ] as unknown as TemplateStringsArray;
+  (parts as unknown as { raw: readonly string[] }).raw = parts;
+
+  const [rows, counted] = await Promise.all([
+    sql(parts, endpointId, status, status, options.limit, options.offset),
     sql`
       SELECT COUNT(*)::int AS n FROM endpoint_runs
       WHERE endpoint_id = ${endpointId}

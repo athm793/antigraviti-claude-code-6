@@ -58,7 +58,7 @@ export function StatsBar({
         <button
           onClick={() => setConfirmOpen(true)}
           disabled={resetting || !canReset}
-          title={canReset ? undefined : "No exhausted or cooldown keys to reset"}
+          data-tip={canReset ? undefined : "No exhausted or cooldown keys to reset"}
           className={`${btnSecondary} gap-2 w-[9.5rem] shrink-0`}
         >
           {resetting && <Spinner className="w-4 h-4" />}

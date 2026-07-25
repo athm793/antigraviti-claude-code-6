@@ -224,7 +224,7 @@ export function Select({
                 role="option"
                 aria-selected={isSelected}
                 aria-disabled={option.disabled || undefined}
-                title={option.disabled ? option.disabledReason : undefined}
+                data-tip={option.disabled ? option.disabledReason : undefined}
                 onClick={() => pick(index)}
                 onMouseEnter={() => !option.disabled && setActiveIndex(index)}
                 className={`min-h-[44px] px-3 flex items-center gap-2 cursor-pointer ${

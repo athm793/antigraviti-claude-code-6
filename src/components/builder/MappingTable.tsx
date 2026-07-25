@@ -51,7 +51,7 @@ export function MappingTable({
           {missing.map((field) => (
             <span
               key={field}
-              title="Another step fills this field, but this one doesn't"
+              data-tip="Another step fills this field, but this one doesn't"
               className="text-[10px] font-mono px-2 py-0.5 rounded border bg-amber-500/10 text-amber-400 border-amber-500/25"
             >
               {field} · not mapped here
@@ -107,7 +107,7 @@ export function MappingTable({
                     type="button"
                     onClick={() => onChange(mappings.filter((_, i) => i !== index))}
                     aria-label={`Remove ${mapping.field || "field"}`}
-                    title="Remove field"
+                    data-tip="Remove field"
                     className={btnIcon}
                   >
                     <X className="w-4 h-4" />

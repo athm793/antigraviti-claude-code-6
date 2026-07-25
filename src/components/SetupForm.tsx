@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { inputCls } from "@/lib/ui";
+import { btnPrimary, inputCls } from "@/lib/ui";
 
 export function SetupForm() {
   const router = useRouter();
@@ -125,7 +125,7 @@ export function SetupForm() {
       <button
         type="submit"
         disabled={submitting}
-        className="bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 text-black font-semibold text-sm px-6 min-h-[44px] rounded-lg transition-colors"
+        className={`${btnPrimary} px-6`}
       >
         {submitting ? "Creating account…" : "Create admin account →"}
       </button>

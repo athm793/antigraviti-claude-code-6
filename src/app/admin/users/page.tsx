@@ -21,9 +21,10 @@ export default async function AdminUsersPage() {
         <h1 className="text-2xl font-bold text-white mt-3">Manage Users</h1>
         <p className="text-[#8b8b9e] text-sm mt-1 leading-relaxed">
           Admins can create accounts for teammates, reset passwords, and grant
-          or revoke admin access. Every account can view and manage all proxy
-          configs — there are no per-config permissions. KeyProxy always keeps
-          at least one admin, so the last admin can&apos;t be demoted or deleted.
+          or revoke admin access. Everyone sees and manages only the providers
+          and endpoints they created; admins see everything. KeyProxy always
+          keeps at least one admin, so the last admin can&apos;t be demoted or
+          deleted.
         </p>
       </div>
 

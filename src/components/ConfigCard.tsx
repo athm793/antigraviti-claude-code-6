@@ -53,7 +53,7 @@ export function ConfigCard({
           {/* Reserved line either way, so cards in a row stay the same height. */}
           <p
             className="text-xs mt-0.5 min-h-[16px] text-[#8b8b9e]"
-            title={
+            data-tip={
               usedByEndpoints > 0
                 ? "Waterfall endpoints with a step that calls this provider. Deleting it is blocked while any remain."
                 : undefined
@@ -68,7 +68,7 @@ export function ConfigCard({
           onClick={() => setConfirmOpen(true)}
           disabled={deleting}
           aria-label={`Delete provider ${config.name}`}
-          title="Delete provider"
+          data-tip="Delete provider"
           className={btnIconDanger}
         >
           {deleting ? <Spinner className="w-4 h-4" /> : <Trash className="w-4 h-4" />}
@@ -122,9 +122,11 @@ function Stat({
   tone: string;
 }) {
   return (
-    <div className="flex-1 text-center bg-[#0a0a10] rounded-lg py-2">
+    // min-w-0: flex children default to min-width:auto, so without it three
+    // tiles can't shrink below their label widths and overflow a 375px card.
+    <div className="flex-1 min-w-0 text-center bg-[#0a0a10] rounded-lg py-2">
       <div className={`${tone} font-bold text-xl tabular-nums`}>{value}</div>
-      <div className="text-[#8b8b9e] text-xs">{label}</div>
+      <div className="text-[#8b8b9e] text-xs truncate">{label}</div>
     </div>
   );
 }
