@@ -12,10 +12,11 @@
     padding: 40px 20px;
     font-variant-numeric: tabular-nums;
   }
-  main { max-width: 860px; margin: 0 auto; }
+  main { max-width: 880px; margin: 0 auto; }
   h1 { color: #fff; font-size: 27px; margin-bottom: 4px; }
-  h2 { color: #fff; font-size: 20px; margin: 40px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #1a1a28; }
-  h3 { color: #fff; font-size: 16px; margin: 24px 0 8px; }
+  h2 { color: #fff; font-size: 20px; margin: 44px 0 12px; padding-bottom: 8px; border-bottom: 1px solid #1a1a28; }
+  h3 { color: #fff; font-size: 16px; margin: 26px 0 8px; }
+  h4 { color: #fff; font-size: 14px; margin: 18px 0 6px; }
   p, li { color: #c8c8d8; }
   ul, ol { padding-left: 22px; margin: 8px 0; }
   li { margin: 5px 0; }
@@ -30,7 +31,9 @@
   pre code { background: none; border: none; padding: 0; }
   table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
   th, td { text-align: left; padding: 8px 12px; border: 1px solid #2a2a38; vertical-align: top; }
-  th { background: #111118; color: #fff; font-weight: 600; }
+  th { background: #111118; color: #fff; font-weight: 600; white-space: nowrap; }
+  td code { white-space: nowrap; }
+  .tablewrap { overflow-x: auto; }
   .muted { color: #8b8b9e; }
   .subtitle { color: #8b8b9e; margin-bottom: 26px; }
   .callout {
@@ -43,170 +46,423 @@
     padding: 14px 18px; margin: 14px 0;
   }
   .warn strong { color: #f5b301; }
-  .pill { display: inline-block; background: #2a2a38; color: #c8c8d8; border-radius: 5px; padding: 1px 8px; font-size: 12px; font-weight: 600; }
-  nav.toc { background: #111118; border: 1px solid #2a2a38; border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
-  nav.toc a { display: inline-block; margin-right: 16px; }
+  nav.toc { background: #111118; border: 1px solid #2a2a38; border-radius: 10px; padding: 16px 20px; margin: 18px 0; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  nav.toc li { margin: 3px 0; break-inside: avoid; }
+  @media (max-width: 640px) { nav.toc ol { columns: 1; } }
 </style>
 </head>
 <body>
 <main>
 <h1>KeyProxy — API Documentation</h1>
-<p class="subtitle">Key-rotation proxy and conditional API waterfalls.</p>
+<p class="subtitle">Key-rotation proxy and conditional API waterfalls. This page is the complete reference — the same material as the <a href="llm.txt">machine-readable spec</a>, written for people.</p>
 
 <nav class="toc" aria-label="Contents">
-  <a href="#proxy">1 · Proxy setup</a>
-  <a href="#waterfalls">2 · Waterfalls</a>
-  <a href="#llm">3 · Build with an LLM</a>
-  <a href="#run-api">4 · Run API</a>
-  <a href="#reference">5 · Reference</a>
+<ol>
+  <li><a href="#concepts">Concepts</a></li>
+  <li><a href="#proxy">Providers &amp; the proxy</a></li>
+  <li><a href="#building">Building a waterfall</a></li>
+  <li><a href="#definition">Definition reference</a></li>
+  <li><a href="#templates">Templates</a></li>
+  <li><a href="#conditions">Conditions</a></li>
+  <li><a href="#execution">How a run executes</a></li>
+  <li><a href="#run-api">Run API</a></li>
+  <li><a href="#caching">Caching</a></li>
+  <li><a href="#analytics">Runs, analytics &amp; retention</a></li>
+  <li><a href="#keys">Endpoint keys &amp; rate limits</a></li>
+  <li><a href="#llm">Building with an LLM</a></li>
+  <li><a href="#example">Worked example</a></li>
+  <li><a href="#limits">Limits &amp; troubleshooting</a></li>
+</ol>
 </nav>
 
-<div class="callout">
-  <strong>Building a waterfall with an LLM?</strong> Skip straight to
-  <a href="#llm">section 3</a>. You give any capable model
-  <a href="llm.txt">our machine-readable spec</a> plus your providers' API
-  docs, and it writes the whole definition for you — conditions, parallel
-  groups, output mapping, all of it.
-</div>
+<h2 id="concepts">1 · Concepts</h2>
+<ul>
+  <li><strong>Provider</strong> — one upstream API plus a pool of API keys. KeyProxy injects the next active key into every call and rotates automatically when one is rate-limited. Providers work standalone (as a pass-through proxy) and as the building blocks of waterfalls.</li>
+  <li><strong>Endpoint</strong> — one public URL (<code>/api/run/&lt;slug&gt;</code>) that runs an ordered list of <strong>steps</strong>. Each step calls one provider; rules decide whether a step runs and whether its response counts as an answer.</li>
+  <li><strong>Definition</strong> — the JSON document describing an endpoint's inputs, steps and settings. Every save is an immutable version; the run log records which version each run used, and the cache invalidates automatically when the version changes.</li>
+  <li><strong>The flagship pattern</strong> — try Prospeo; if it returns no email, try BetterEnrich, then Hunter. One URL, one response shape whichever provider answers, and per-provider hit rates telling you which vendor earns its keep.</li>
+</ul>
 
-<h2 id="proxy">1 · Setting up the proxy</h2>
+<h2 id="proxy">2 · Providers &amp; the proxy</h2>
 
-<p>A <strong>provider</strong> is one upstream API plus a pool of API keys.
-KeyProxy forwards your calls with the next active key injected; when a key
-hits a rate limit, it's benched and the next one is used automatically.</p>
+<h3>Creating a provider</h3>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>What to enter</th></tr>
+  <tr><td>Target base URL</td><td>The API's origin, e.g. <code>https://api.hunter.io</code>. Must be publicly reachable — localhost, private ranges (RFC1918, link-local, CGNAT), <code>.internal</code> hosts and credentials-in-URL are refused, both at save time and again at request time.</td></tr>
+  <tr><td>Auth header name + prefix</td><td>How this API expects its key: <code>Authorization</code> + <code>Bearer&nbsp;</code>, or <code>X-Api-Key</code> with an empty prefix, etc. Check the provider's own docs — this is the single thing you must get right, because every proxied call and every waterfall step authenticates through it.</td></tr>
+  <tr><td>Rate-limit status codes</td><td>Which responses mean "this key is spent" — usually just <code>429</code>. Only 400–599 are accepted (a success code here would make the proxy retry its own successes).</td></tr>
+  <tr><td>Cooldown (minutes)</td><td>How long a rate-limited key rests before being retried automatically. <code>0</code> = benched until you press "Reset all keys".</td></tr>
+</table></div>
+<p>Then paste your API keys on the provider page, one per line. Keys never leave the server; the dashboard only ever shows a <code>••••1234</code> preview.</p>
 
-<ol>
-  <li><strong>Create a provider</strong> (Providers → New provider):
-    <table>
-      <tr><th>Field</th><th>What to enter</th></tr>
-      <tr><td>Target base URL</td><td>The API's origin, e.g. <code>https://api.hunter.io</code>. Must be publicly reachable — localhost and private ranges are refused.</td></tr>
-      <tr><td>Auth header name + prefix</td><td>How this API expects its key, e.g. <code>Authorization</code> + <code>Bearer&nbsp;</code>, or <code>X-Api-Key</code> with no prefix. Check the provider's docs.</td></tr>
-      <tr><td>Rate-limit status codes</td><td>Which responses mean "this key is spent" — usually <code>429</code>. Only 400–599 are accepted.</td></tr>
-      <tr><td>Cooldown</td><td>Minutes before a rate-limited key is retried. 0 = benched until you reset it.</td></tr>
-    </table>
-  </li>
-  <li><strong>Add keys</strong> — paste them on the provider page, one per line.</li>
-  <li><strong>Call the proxy</strong> — replace the API's base URL with your proxy URL:
+<h3>Calling the proxy</h3>
 <pre><code># Before — direct, one key, dies on rate limits
-curl https://api.hunter.io/v2/email-finder?domain=acme.com \
+curl "https://api.hunter.io/v2/email-finder?domain=acme.com" \
   -H "X-Api-Key: real-key"
 
 # After — through KeyProxy, rotates across the whole pool
-curl https://&lt;your-keyproxy&gt;/api/proxy/&lt;CONFIG_ID&gt;/v2/email-finder?domain=acme.com \
+curl "https://&lt;your-keyproxy&gt;/api/proxy/&lt;CONFIG_ID&gt;/v2/email-finder?domain=acme.com" \
   -H "x-master-key: &lt;MASTER_KEY&gt;"</code></pre>
-    The master key (shown on the provider card) authenticates <em>you</em> to
-    KeyProxy; it can also go in <code>Authorization: Bearer …</code>. KeyProxy
-    strips it, injects the next pool key, and forwards everything else —
-    method, headers, body — unchanged.</li>
-</ol>
+<p>The <strong>master key</strong> (on the provider card) authenticates <em>you</em> to KeyProxy — it can also be sent as <code>Authorization: Bearer …</code>. KeyProxy strips it, injects the next pool key as the provider's auth header, and forwards everything else — method, path, query, headers, body — unchanged. The upstream response streams back verbatim.</p>
 
-<h2 id="waterfalls">2 · Waterfalls</h2>
-
-<p>An <strong>endpoint</strong> is one public URL that runs an ordered list of
-<strong>steps</strong>. Each step calls one of your providers; rules decide
-whether a step runs and whether its response counts as an answer. The classic
-use: try Prospeo, and if it returns no email try BetterEnrich, then Hunter —
-one URL, one response shape, whichever provider had it.</p>
-
-<h3>Concepts</h3>
+<h4>How rotation behaves</h4>
 <ul>
-  <li><strong>Inputs</strong> — what callers send (<code>domain</code>, <code>first_name</code>…). Each becomes a <code>{{input.…}}</code> token usable in any step.</li>
-  <li><strong>Steps</strong> — a request template against one provider, plus an <em>output map</em> that pulls fields out of its response into your normalized result. Auth is never in a step — it comes from the provider's key pool.</li>
-  <li><strong>Answered?</strong> — by default, a step counts as an answer when it returns 2xx <em>and</em> fills every required output field. So a provider replying <code>200 {"email": null}</code> is a miss and the waterfall moves on. Custom conditions can demand more (e.g. score ≥ 70).</li>
-  <li><strong>Stop or continue</strong> — "stop on success" makes a waterfall; "continue" makes a chain that gathers fields from several providers (e.g. find an email, then verify it).</li>
-  <li><strong>Parallel groups</strong> — opt-in: consecutive steps can run at the same time. Faster, but you pay every member on every run. Results always merge in listed order, so runs are reproducible.</li>
+  <li>Keys are used lowest-numbered-first: the pool <em>drains in order</em> rather than spreading load. Under heavy concurrency several requests can land on the same key at once.</li>
+  <li>A response matching the provider's rate-limit codes benches that key (cooldown or exhausted) and the next key is tried immediately, within the same request.</li>
+  <li>Every attempt has its own timeout (default 30&nbsp;s, tunable via the <code>PROXY_ATTEMPT_TIMEOUT_MS</code> env var), so a hanging upstream fails fast instead of eating the whole function budget.</li>
+  <li>Redirects are not followed — a 3xx comes back to you as-is. Following a <code>Location</code> the upstream chose would send a live key somewhere you never configured.</li>
+  <li>"Rotate" on the provider card mints a new master key (the old one stops working immediately). "Reset all keys" returns every benched pool key to active.</li>
 </ul>
 
-<h3>Building one</h3>
-<ol>
-  <li>Endpoints → New endpoint. You get the public URL and an endpoint key (shown once — it's stored as a hash).</li>
-  <li>On the <strong>Build</strong> tab, declare inputs and add a step per provider, in the order you want them tried. The step editor covers conditions, output mapping, and what to do on success/failure. Or write JSON directly — see <a href="#llm">section 3</a>.</li>
-  <li><strong>Run test</strong> executes the unsaved draft against your real providers (live calls, real credits, nothing logged) and shows exactly what each step did, including why a condition passed or failed.</li>
-  <li><strong>Save waterfall</strong>. Every save is a version; Settings has the history and one-click restore.</li>
-</ol>
+<h4>Proxy error responses</h4>
+<p>When the response comes from KeyProxy itself rather than the upstream, the JSON body carries <code>"proxy": true</code> so you can tell them apart:</p>
+<div class="tablewrap"><table>
+  <tr><th>HTTP</th><th>Meaning</th></tr>
+  <tr><td>503</td><td>No active keys in the pool, or every key rate-limited during rotation.</td></tr>
+  <tr><td>504</td><td>The upstream didn't answer within the per-attempt timeout.</td></tr>
+  <tr><td>502</td><td>The upstream couldn't be reached at all.</td></tr>
+  <tr><td>400</td><td>The resolved target was blocked (e.g. the URL escaped the provider's base, or resolved to a private address).</td></tr>
+  <tr><td>401</td><td>Missing or wrong master key.</td></tr>
+</table></div>
 
-<h3>Worth knowing</h3>
+<h2 id="building">3 · Building a waterfall</h2>
+
+<ol>
+  <li><strong>Endpoints → New endpoint.</strong> Pick a name and URL slug (2–60 chars, lowercase letters, numbers, hyphens). You get the public URL and an endpoint key — shown once, then stored only as a hash.</li>
+  <li><strong>Declare inputs</strong> on the Build tab — the fields callers will send. Each becomes a <code>{{input.…}}</code> token usable in any step. Give every input an example: it prefills the test runner.</li>
+  <li><strong>Add a step per provider</strong>, in the order you want them tried. Each step card has five sections:
+    <ul>
+      <li><em>When should this step run?</em> — a condition; empty means always. From step 2 onward you can also toggle "run at the same time as the step above" to form a parallel group.</li>
+      <li><em>Request</em> — method, path (relative to the provider's base URL), query parameters, extra headers, and body. Type <code>{{</code> in any field for autocomplete over everything available at that step's position.</li>
+      <li><em>What counts as an answer?</em> — empty means the default: HTTP 2xx <em>and</em> every required output filled. Add conditions to demand more (e.g. score ≥ 70).</li>
+      <li><em>Output fields</em> — pull values out of the response into your normalized result, with optional transforms.</li>
+      <li><em>Then what?</em> — stop on success (waterfall) or carry on (chain); and what a failure does: try the next step, stop, or fail the whole run.</li>
+    </ul>
+  </li>
+  <li><strong>Run test</strong> — executes the <em>unsaved draft</em> against your real providers. Live calls, real credits, nothing logged (so experiments never skew your hit rates). Every step row opens to show the exact URL called, the condition traces ("Should it run?" / "Did it answer?"), unresolved placeholders, and the response.</li>
+  <li><strong>Save waterfall.</strong> Saving is versioned and uses an optimistic lock — if someone else saved meanwhile you get a conflict, never a silent overwrite. Settings → Version history lists every save with one-click restore (restore copies the old version forward; history is never rewritten).</li>
+</ol>
+<p>Prefer JSON? The Build tab's <strong>JSON</strong> view shows the whole definition; edits there apply to the builder only when you press <em>Apply</em>, and every validation problem is listed with its exact location. Import/Download round-trips definitions as files. This is also the workflow for <a href="#llm">LLM-generated definitions</a>.</p>
+
+<h2 id="definition">4 · Definition reference</h2>
+
+<p>The definition is one JSON document:</p>
+<pre><code>{
+  "version": 1,
+  "inputs":  [ ... ],      // what callers send            (max 30)
+  "steps":   [ ... ],      // ordered steps                (max 12)
+  "outputs": [ ... ],      // declared result fields
+  "settings": { ... }
+}</code></pre>
+
+<h3>Inputs</h3>
+<pre><code>{ "name": "domain", "type": "string", "required": true,
+  "example": "acme.com", "description": "Company domain" }</code></pre>
 <ul>
-  <li><strong>Caching</strong> (Settings) — a repeated lookup returns the answer you already bought, at zero upstream calls. Editing any step invalidates automatically; misses are never cached, so "nobody had it yesterday" doesn't stop you asking today.</li>
-  <li><strong>Runs tab</strong> — per-provider hit rate, share of answers, and cost per answer. Don't compare hit rates between steps: a later step only sees what everything before it missed.</li>
-  <li><strong>Rate limit</strong> — per endpoint key, per minute (Settings). It's a spend control: every run buys upstream calls.</li>
+  <li><code>type</code>: <code>string · number · boolean · object · array</code>. Caller values are coerced sensibly — <code>"50"</code> → 50 for a number, <code>"true"/"1"/"yes"</code> → true for a boolean. Uncoercible or missing-required values reject the run with HTTP 400 before any provider is called.</li>
+  <li>Undeclared fields a caller sends never reach the templates — declare everything you use.</li>
 </ul>
 
-<h2 id="llm">3 · Build the JSON with an LLM</h2>
+<h3>Step fields</h3>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rules</th></tr>
+  <tr><td><code>key</code></td><td>Stable reference name: <code>^[a-z][a-z0-9_]{0,39}$</code>, unique. Later steps reference it (<code>{{steps.hunter.output.email}}</code>) — never by position, so reordering can't break references. Renaming a key in the visual editor rewrites every reference automatically.</td></tr>
+  <tr><td><code>name</code></td><td>Human label, required.</td></tr>
+  <tr><td><code>config_id</code></td><td>The provider's id. Must be a provider <em>you</em> can access — checked at save and at test.</td></tr>
+  <tr><td><code>group</code></td><td><code>null</code>, or a shared string on <em>consecutive</em> steps to run them in parallel (§7). A group interrupted by an ungrouped step is invalid.</td></tr>
+  <tr><td><code>enabled</code></td><td><code>false</code> skips the step but keeps it in the definition.</td></tr>
+  <tr><td><code>request.method</code></td><td><code>GET · POST · PUT · PATCH · DELETE</code></td></tr>
+  <tr><td><code>request.path</code></td><td>Relative to the provider's base URL, starts with <code>/</code>. Templates allowed. Each resolved segment is URL-encoded individually; <code>.</code>/<code>..</code> segments fail; a <em>missing</em> value in a path fails the step <em>before</em> any billed call.</td></tr>
+  <tr><td><code>request.query</code></td><td><code>{key, value}</code> pairs, max 30. A value whose template resolves to nothing <strong>drops the parameter entirely</strong> — <code>?email=</code> and no <code>email</code> mean different things to most APIs.</td></tr>
+  <tr><td><code>request.headers</code></td><td><code>{key, value}</code> pairs, max 30. Forbidden: <code>host</code>, <code>connection</code>, <code>content-length</code>, <code>transfer-encoding</code>, <code>x-master-key</code>, <code>x-endpoint-key</code>, and <strong>the provider's auth header</strong> — that one is injected from the key pool. A value resolving to text with a line break fails the step (header forgery).</td></tr>
+  <tr><td><code>request.body_type</code></td><td><code>none · json · raw</code></td></tr>
+  <tr><td><code>request.body</code></td><td>For <code>json</code>: a real object, never a string of JSON — values are substituted structurally, not spliced into text, which is what makes caller input unable to inject fields. Templates work in nested values <em>and keys</em>; anything resolving to nothing is dropped. <code>Content-Type: application/json</code> is set automatically. For <code>raw</code>: a template string — set your own <code>Content-Type</code> header.</td></tr>
+  <tr><td><code>run_condition</code></td><td><code>null</code> = always run. Evaluated <em>before</em> the call, so it sees <code>input.*</code>, <code>result.*</code> and earlier steps — not this step's response. The idiom "only pay for this provider if we still have no email" is <code>result.email is empty</code>.</td></tr>
+  <tr><td><code>success_condition</code></td><td><code>null</code> = the default: <strong>HTTP 2xx and every <code>required_outputs</code> field non-empty after this step's mapping ran</strong>. That default is the heart of the product — a provider returning <code>200 {"email": null}</code> has not answered, and without it the waterfall would stop there.</td></tr>
+  <tr><td><code>output_map</code></td><td>Max 40 entries of <code>{field, from, transform}</code>. Runs <em>before</em> the success condition, so conditions can reference <code>output.email</code>. <code>from</code> may be a template or a plain literal (e.g. stamp <code>"prospeo"</code> into a <code>source</code> field).</td></tr>
+  <tr><td><code>on_success</code></td><td><code>"stop"</code> — this answer wins, later steps are skipped (waterfall). <code>"continue"</code> — keep going (chain).</td></tr>
+  <tr><td><code>on_failure</code></td><td><code>"continue"</code> (try the next step), <code>"stop"</code> (return what's gathered), <code>"fail"</code> (fail the whole run, HTTP 502).</td></tr>
+  <tr><td><code>timeout_ms</code></td><td><code>null</code> (default 20000) or 500–45000.</td></tr>
+  <tr><td><code>max_key_attempts</code></td><td><code>null</code> (default 3) or 1–5 — how many pool keys to try if rate-limited. Every attempt is a real, billed call.</td></tr>
+  <tr><td><code>cost_per_call_cents</code></td><td>Optional. Feeds cost-per-answer analytics and the parallel-group cost estimate.</td></tr>
+</table></div>
 
-<p>The whole waterfall is one JSON document, and
-<a href="llm.txt"><strong>/docs/llm.txt</strong></a> is a complete,
-self-contained specification of it — schema, template language, all 18
-condition operators, execution semantics, hard limits, worked examples up to
-multi-stage parallel definitions, and a checklist of the mistakes models
-actually make. Every example in it is validated against the real saving
-route in CI-style checks, so what the spec teaches is what the app accepts.</p>
+<h3>Transforms</h3>
+<div class="tablewrap"><table>
+  <tr><th>Transform</th><th>Effect</th></tr>
+  <tr><td><code>none</code></td><td>Value as extracted.</td></tr>
+  <tr><td><code>trim</code> / <code>lower</code> / <code>upper</code></td><td>String cleanup.</td></tr>
+  <tr><td><code>number</code></td><td>Parse; unparseable → the field is omitted (never <code>NaN</code>).</td></tr>
+  <tr><td><code>boolean</code></td><td><code>true/1/yes/y</code> → true, <code>false/0/no/n</code> → false, anything else → omitted.</td></tr>
+  <tr><td><code>first</code></td><td>First element of a list.</td></tr>
+  <tr><td><code>join</code></td><td>List → <code>"a, b, c"</code>.</td></tr>
+</table></div>
+<p>Two rules that shape everything: a value resolving to <code>null</code>/nothing <strong>never fills a field</strong> (so the waterfall can continue past it), while <code>0</code> and <code>false</code> <strong>do</strong> — they are real answers. And once a field is filled, later steps cannot overwrite it: first write wins, empty never overwrites filled.</p>
 
+<h3>Settings</h3>
+<div class="tablewrap"><table>
+  <tr><th>Key</th><th>Meaning</th></tr>
+  <tr><td><code>required_outputs</code></td><td>The fields that make a run count as answered. Drives the default success condition of every step and the run's final status. Usually the single most important setting.</td></tr>
+  <tr><td><code>cache_key_fields</code></td><td><code>null</code> = all inputs participate in the cache key, or an array naming which do.</td></tr>
+  <tr><td><code>cache_key_exclude</code></td><td>Inputs excluded from the key (e.g. a <code>trace_id</code>).</td></tr>
+  <tr><td><code>cache_key_normalize</code></td><td>Default <code>true</code>: strings are trimmed + lowercased for caching, so <code>" Acme.com"</code> and <code>"acme.com"</code> share an answer.</td></tr>
+  <tr><td><code>group_merge</code></td><td>Per parallel group id: <code>first_success</code> (default) · <code>fill_empty</code> · <code>collect</code> — see §7.</td></tr>
+  <tr><td><code>max_parallel</code></td><td>1–8, concurrency cap inside a group.</td></tr>
+</table></div>
+
+<h2 id="templates">5 · Templates</h2>
+<p><code>{{root.path}}</code> — a path, nothing else: no expressions, functions, filters or arithmetic. Path syntax: <code>a.b</code>, <code>a.b[0].c</code>, <code>a["key.with.dots"]</code>, negative indexes (<code>items[-1]</code> = last). Max 12 segments.</p>
+<div class="tablewrap"><table>
+  <tr><th>Root</th><th>Meaning</th><th>Available in</th></tr>
+  <tr><td><code>input.&lt;name&gt;</code></td><td>A declared caller input</td><td>everywhere</td></tr>
+  <tr><td><code>steps.&lt;key&gt;.output.&lt;field&gt;</code></td><td>A field an <em>earlier</em> step mapped</td><td>everywhere</td></tr>
+  <tr><td><code>steps.&lt;key&gt;.body.&lt;path&gt;</code></td><td>An earlier step's raw response body</td><td>everywhere</td></tr>
+  <tr><td><code>steps.&lt;key&gt;.status</code></td><td>An earlier step's HTTP status</td><td>everywhere</td></tr>
+  <tr><td><code>result.&lt;field&gt;</code></td><td>The merged result <em>so far</em></td><td>everywhere</td></tr>
+  <tr><td><code>response.body.&lt;path&gt;</code> / <code>response.status</code></td><td><em>This</em> step's response</td><td><code>output_map.from</code> and success conditions only</td></tr>
+  <tr><td><code>run.id</code> / <code>run.started_at</code></td><td>Run id / ISO start time</td><td>everywhere</td></tr>
+</table></div>
+<ul>
+  <li><strong>Type preservation:</strong> a template that is <em>exactly one</em> placeholder keeps the value's type — <code>{"limit": "{{input.limit}}"}</code> produces <code>{"limit": 50}</code>, not <code>"50"</code>. Surrounding text turns it into a string.</li>
+  <li><strong>Reference rules</strong> (enforced at save): only earlier steps, never itself (use <code>response.*</code>), never a sibling in its own parallel group. Referencing an undeclared input is a warning.</li>
+</ul>
+
+<h2 id="conditions">6 · Conditions</h2>
+<p>A condition is a JSON tree — <code>{"all": [...]}</code>, <code>{"any": [...]}</code>, <code>{"not": ...}</code>, or a leaf <code>{"path", "op", "value"?}</code>. Trees nest (the visual editor authors one level; nested trees still run and are editable as JSON). Max 200 nodes.</p>
+<p>Leaf paths are bare (no braces). In a <em>run</em> condition: <code>input.*</code>, <code>result.*</code>, <code>steps.&lt;key&gt;.*</code>. In a <em>success</em> condition, additionally: <code>status</code>, <code>body.&lt;path&gt;</code>, <code>output.&lt;field&gt;</code>, <code>headers.&lt;name&gt;</code> (case-insensitive), <code>latency_ms</code>.</p>
+<div class="tablewrap"><table>
+  <tr><th>Operators</th><th>Notes</th></tr>
+  <tr><td><code>exists · not_exists · empty · not_empty · is_true · is_false</code></td><td>Unary — no <code>value</code>. <code>empty</code> = missing, <code>null</code>, <code>""</code>, <code>[]</code> or <code>{}</code>. <strong><code>0</code> and <code>false</code> are NOT empty</strong> — a confidence of 0 is a real answer.</td></tr>
+  <tr><td><code>eq · neq</code></td><td>Loose: <code>"200"</code> equals <code>200</code>; booleans match their string forms; objects compare structurally, key-order-independent.</td></tr>
+  <tr><td><code>gt · gte · lt · lte</code></td><td>Numeric; non-numeric values are simply false, never an error.</td></tr>
+  <tr><td><code>contains · not_contains</code></td><td>String → substring; array → membership; object → has key.</td></tr>
+  <tr><td><code>starts_with · ends_with</code></td><td>String prefixes/suffixes.</td></tr>
+  <tr><td><code>in · not_in</code></td><td><code>value</code> must be an array.</td></tr>
+</table></div>
+<p>There is deliberately <strong>no regex operator</strong> — compose the string operators instead. Every evaluation produces a full trace (visible in test runs and the run log), so "why was this step skipped?" is always answerable.</p>
+
+<h2 id="execution">7 · How a run executes</h2>
 <ol>
-  <li>Create your providers first (section 1). Steps refer to providers by id, so they must exist.</li>
-  <li>Open a capable LLM. Paste in: <a href="llm.txt">llm.txt</a>, the API docs of each provider you want to chain, and what you want (the spec ends with a ready-made prompt template).</li>
-  <li>Take the JSON it produces, open your endpoint's Build tab → <strong>JSON</strong> view, paste, and click <strong>Apply to builder</strong>. Every problem is listed with its exact location — paste the list back into the LLM if anything fails.</li>
-  <li>Assign each step's provider in the visual view (the model can't know your provider ids — it leaves placeholders, and the JSON view flags them).</li>
-  <li>Run test, then Save.</li>
+  <li>Steps run top to bottom. Disabled steps and steps whose run condition fails are skipped — a skipped step costs nothing.</li>
+  <li>The request is built. A missing value in the <em>path</em> fails the step before any billed call; missing query/header/body values are simply omitted.</li>
+  <li>The call goes out through the provider's key pool with automatic rotation (up to <code>max_key_attempts</code>).</li>
+  <li>The output map runs, then the success condition. Success + <code>stop</code> → later steps are skipped and this step's body becomes the response's <code>raw</code>. Success + <code>continue</code> → keep going. Failure → <code>on_failure</code> decides.</li>
 </ol>
+<h3>Parallel groups</h3>
+<p>Consecutive steps sharing a <code>group</code> start together (run conditions are checked just before the group starts, against what the run has found so far). Results always merge in <strong>declared order, never completion order</strong> — the same inputs always produce the same output regardless of which provider replied faster.</p>
+<ul>
+  <li><code>first_success</code> — the first <em>listed</em> member that answered wins. You still pay every member, every time: the trade is latency for cost, and the builder says so on the group.</li>
+  <li><code>fill_empty</code> — every member contributes; earlier-listed members win conflicts.</li>
+  <li><code>collect</code> — every member's values are gathered into arrays.</li>
+</ul>
+<p>If nobody in the group answers, the strictest <code>on_failure</code> among members applies (<code>fail</code> beats <code>stop</code> beats <code>continue</code>).</p>
+<h3>Run status</h3>
+<div class="tablewrap"><table>
+  <tr><th><code>status</code></th><th>Meaning</th><th>HTTP</th></tr>
+  <tr><td><code>success</code></td><td>A step answered and every required field is filled</td><td>200</td></tr>
+  <tr><td><code>partial</code></td><td>Some fields found, but not all required ones</td><td>200</td></tr>
+  <tr><td><code>miss</code></td><td>Everyone replied; nobody had it</td><td>200</td></tr>
+  <tr><td><code>error</code></td><td>Something broke — unreachable provider, out of time, a <code>fail</code> step failed</td><td>502</td></tr>
+</table></div>
+<div class="warn"><strong>A miss is HTTP 200, not 404.</strong> Clay, n8n, Make and Zapier treat any non-2xx as a failure and will retry the row or halt the table — so "no email found" is a successful response that says so. Branch on the <code>status</code> field, never on the HTTP code.</div>
+<p>Whole-run budget: 50 seconds, enforced by KeyProxy itself so a timed-out run still returns a complete result and a complete log. Nothing new starts once the clock runs out.</p>
 
-<div class="warn"><strong>Never give an LLM your API keys.</strong> It doesn't
-need them — keys live in the provider's pool and are injected automatically.
-The spec instructs models to refuse to place auth in steps; the validator
-rejects it anyway.</div>
-
-<h2 id="run-api">4 · Run API</h2>
-
+<h2 id="run-api">8 · Run API</h2>
 <pre><code>POST https://&lt;your-keyproxy&gt;/api/run/&lt;slug&gt;
 x-endpoint-key: kp_ep_...        # or: Authorization: Bearer kp_ep_...
 Content-Type: application/json
 
 { "domain": "acme.com", "first_name": "Ana" }</code></pre>
+<p>One JSON object of declared inputs per request — never an array (one run per request) — max 128&nbsp;KB. The URL segment accepts the slug or the endpoint id.</p>
+<h3>Response fields</h3>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>status</code></td><td><code>success · partial · miss · error</code> (table above).</td></tr>
+  <tr><td><code>output</code></td><td>Your normalized fields, merged across every step that contributed.</td></tr>
+  <tr><td><code>raw</code></td><td>The winning provider's response body, untouched. <code>null</code> if no step answered.</td></tr>
+  <tr><td><code>resolved_by</code></td><td>The <code>key</code> of the step that answered, or <code>null</code>.</td></tr>
+  <tr><td><code>missing</code></td><td>Required fields still empty.</td></tr>
+  <tr><td><code>error</code></td><td>Human-readable failure reason, or <code>null</code>.</td></tr>
+  <tr><td><code>meta</code></td><td><code>endpoint</code> (slug), <code>version</code> (definition version number), <code>duration_ms</code>, <code>upstream_calls</code> (real HTTP calls incl. rotation retries), <code>cost_cents</code>, <code>cache_hit</code>, <code>run_id</code>.</td></tr>
+  <tr><td><code>trace</code></td><td>One entry per step, in order — see below. Empty for cache hits.</td></tr>
+</table></div>
+<h3>Trace entries</h3>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Meaning</th></tr>
+  <tr><td><code>index · key · name · group</code></td><td>Which step this is.</td></tr>
+  <tr><td><code>status</code></td><td><code>success · miss · skipped · error · config_missing</code> (provider was deleted).</td></tr>
+  <tr><td><code>skip_reason</code></td><td>Plain English when skipped: "Its condition wasn't met", "Stopped after step 2", "Ran out of time", "Turned off".</td></tr>
+  <tr><td><code>http_status · latency_ms · attempts · keys_exhausted · cost_cents</code></td><td>What the call cost.</td></tr>
+  <tr><td><code>output</code></td><td>What this step alone mapped (before merging).</td></tr>
+  <tr><td><code>unresolved</code></td><td>Placeholders that had no value — the usual cause of a surprising miss.</td></tr>
+  <tr><td><code>run_condition · success_condition</code></td><td>Full evaluation traces: every leaf, its actual value, pass/fail.</td></tr>
+  <tr><td><code>request · response_preview</code></td><td>Only when "Save request and response bodies" is on for the endpoint.</td></tr>
+</table></div>
+<h3>Error responses</h3>
+<div class="tablewrap"><table>
+  <tr><th>HTTP</th><th>Meaning</th></tr>
+  <tr><td>401</td><td>Missing/unknown/revoked key, or the key doesn't belong to this endpoint.</td></tr>
+  <tr><td>400</td><td>Invalid input — body isn't a JSON object, or per-field problems listed in <code>details</code>.</td></tr>
+  <tr><td>413</td><td>Body over 128&nbsp;KB.</td></tr>
+  <tr><td>429</td><td>This key's per-minute limit reached; <code>Retry-After</code> header and <code>retry_after</code> field say when.</td></tr>
+  <tr><td>503</td><td>The endpoint is turned off.</td></tr>
+  <tr><td>409</td><td>The endpoint has no steps yet.</td></tr>
+  <tr><td>502</td><td>Run status <code>error</code> — the full result body is still returned.</td></tr>
+</table></div>
 
-<p>One JSON object of declared inputs per request (max 128&nbsp;KB). Response:</p>
+<h2 id="caching">9 · Caching</h2>
+<p>Off by default; enable per endpoint in Settings. The point is money, not latency: a repeated lookup returns the answer you already bought, at zero upstream calls.</p>
+<ul>
+  <li>The cache key is a hash of <strong>owner + endpoint + definition version + canonicalized input</strong>. Version in the key <em>is</em> the invalidation story: edit a step and every answer bought under the old definition goes cold on its own — nothing to remember to purge. Owner in the key means one account's enriched contact can never be served to another.</li>
+  <li>Input canonicalization is key-order-independent; with <code>cache_key_normalize</code> (default on) strings are trimmed and lowercased. Use <code>cache_key_fields</code> / <code>cache_key_exclude</code> to keep flags like <code>trace_id</code> from fragmenting the cache.</li>
+  <li>Only <code>success</code> and <code>partial</code> results are cached. A <code>miss</code> is not — vendors keep adding data, and "nobody had it yesterday" shouldn't stop you asking today. An <code>error</code> is not — it's transient.</li>
+  <li>TTL is per endpoint (up to 30 days). Settings → "Cached answers" shows the live count and has a manual purge for the one case versioning can't cover: the provider's data changed and your definition didn't.</li>
+  <li>Cache hits appear in the response as <code>meta.cache_hit: true</code> with <code>upstream_calls: 0</code>, and in the run log as "Cached".</li>
+</ul>
 
+<h2 id="analytics">10 · Runs, analytics &amp; retention</h2>
+<p>The <strong>Runs</strong> tab records every call: when, the input, who answered, calls made, duration, result — every column sortable, filterable by outcome. Each run opens to the full per-step story including condition traces.</p>
+<h3>Which provider is earning its keep</h3>
+<ul>
+  <li><strong>Hit rate</strong> — of the runs where a step actually ran, how often it answered. Use it to watch one provider over time.</li>
+  <li><strong>Share of answers</strong> — of all runs that got an answer, how often it was this step. This is the "what would I lose by dropping it" number.</li>
+  <li><strong>Cost per answer</strong> — total spend ÷ answers, the number that decides whether a vendor stays.</li>
+</ul>
+<div class="warn"><strong>Don't compare hit rates between steps.</strong> A later step in a waterfall only ever sees the cases everything before it missed — it is being marked on a harder paper. The dashboard says this too.</div>
+<h3>What gets stored, and for how long</h3>
+<ul>
+  <li>Runs are logged by allowlist: ids, statuses, timings, counts, condition traces, and the caller's input (so a row is recognisable). The <em>result</em> is stored only if you turn on "Save request and response bodies" — it's the personal data your waterfall found, so keeping it is opt-in.</li>
+  <li>Test runs from the Build tab are never logged.</li>
+  <li>Retention is per endpoint (default 30 days, max 365), enforced by a nightly cleanup. Expired cache rows are pruned with it.</li>
+</ul>
+<h3>Endpoint settings reference (dashboard, not part of the definition)</h3>
+<div class="tablewrap"><table>
+  <tr><th>Setting</th><th>Range</th><th>Meaning</th></tr>
+  <tr><td>Accepting requests</td><td>on/off</td><td>Off = the URL answers 503 without deleting anything.</td></tr>
+  <tr><td>Cache results / TTL</td><td>0 – 30 days</td><td>§9.</td></tr>
+  <tr><td>Runs per minute, per key</td><td>0–10000</td><td>§11. 0 disables the limit.</td></tr>
+  <tr><td>Save request/response bodies</td><td>on/off</td><td>Stores results + previews in the run log. Off by default (PII).</td></tr>
+  <tr><td>Delete run history after</td><td>1–365 days</td><td>Retention for this endpoint's runs.</td></tr>
+</table></div>
+
+<h2 id="keys">11 · Endpoint keys &amp; rate limits</h2>
+<ul>
+  <li>Keys look like <code>kp_ep_&lt;id&gt;_&lt;secret&gt;</code>, are shown once at creation, and are stored only as a one-way hash — a database snapshot hands nobody a working key. Issue as many as you need (one per tool is good practice); revoking one doesn't touch the others, so rotation has a grace window.</li>
+  <li>A key is bound to its endpoint — a key for endpoint A can never run endpoint B.</li>
+  <li>The per-minute limit is counted per key, server-side, shared across all instances. It's a spend control: every run buys real upstream calls. 429 responses carry <code>Retry-After</code>.</li>
+</ul>
+
+<h2 id="llm">12 · Building with an LLM</h2>
+<p>The whole waterfall is one JSON document, and <a href="llm.txt"><strong>/docs/llm.txt</strong></a> is a complete, self-contained specification of it, written for machine consumption: the same schema, template language, operators, semantics and limits as sections 4–7 above, plus three worked examples up to a parallel-race definition, a checklist of the ten mistakes models actually make, and a ready-made prompt template. Every definition example in it is machine-validated against the real save route, so what the spec teaches is what the app accepts.</p>
+<ol>
+  <li>Create your providers first (§2) — steps refer to providers by id, so they must exist.</li>
+  <li>Paste into any capable LLM: <a href="llm.txt">llm.txt</a>, the API docs of each provider you want to chain, and what you want (the prompt template is at the end of the spec).</li>
+  <li>Open your endpoint's Build tab → <strong>JSON</strong> view, paste the model's output, press <strong>Apply to builder</strong>. Every problem is listed with its exact location — paste the list back into the LLM if anything fails.</li>
+  <li>Assign each step's provider in the visual view (the model can't know your provider ids — it leaves placeholders, and the JSON view flags them with the step names).</li>
+  <li>Run test, then Save.</li>
+</ol>
+<div class="warn"><strong>Never give an LLM your API keys.</strong> It doesn't need them — keys live in the provider's pool and are injected automatically. The spec instructs models never to place auth in steps, and the validator rejects it anyway.</div>
+
+<h2 id="example">13 · Worked example — three-provider email waterfall</h2>
+<p>Try Prospeo; if it has no email, BetterEnrich; then Hunter, whose answer only counts at score ≥ 70. This exact JSON is validated against the app's save route (it is example A in <a href="llm.txt">llm.txt</a> — two more, a chain and a parallel-race, live there).</p>
 <pre><code>{
-  "status": "success",                  // success | partial | miss | error
-  "output": { "email": "ana@acme.com" },// your normalized fields
-  "raw": { ... },                       // the winning provider's response, untouched
-  "resolved_by": "hunter",              // which step answered
-  "missing": [],                        // required fields still empty
-  "error": null,
-  "meta": { "duration_ms": 1840, "upstream_calls": 2,
-            "cost_cents": 17, "cache_hit": false, "run_id": "..." },
-  "trace": [ ...one entry per step: ran/skipped/why, status, latency... ]
+  "version": 1,
+  "inputs": [
+    { "name": "first_name", "type": "string", "required": true,  "example": "Ana" },
+    { "name": "last_name",  "type": "string", "required": true,  "example": "Garcia" },
+    { "name": "domain",     "type": "string", "required": true,  "example": "acme.com" }
+  ],
+  "steps": [
+    { "key": "prospeo", "name": "Prospeo",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_PROSPEO",
+      "group": null, "enabled": true,
+      "request": { "method": "POST", "path": "/email-finder",
+        "query": [], "headers": [], "body_type": "json",
+        "body": { "first_name": "{{input.first_name}}",
+                  "last_name":  "{{input.last_name}}",
+                  "company":    "{{input.domain}}" } },
+      "run_condition": null, "success_condition": null,
+      "output_map": [
+        { "field": "email",  "from": "{{response.body.response.email}}", "transform": "lower" },
+        { "field": "source", "from": "prospeo", "transform": "none" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 2 },
+    { "key": "betterenrich", "name": "BetterEnrich",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_BETTERENRICH",
+      "group": null, "enabled": true,
+      "request": { "method": "POST", "path": "/api/find-work-email",
+        "query": [], "headers": [], "body_type": "json",
+        "body": { "full_name": "{{input.first_name}} {{input.last_name}}",
+                  "domain": "{{input.domain}}" } },
+      "run_condition": null, "success_condition": null,
+      "output_map": [
+        { "field": "email", "from": "{{response.body.email}}", "transform": "lower" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 5 },
+    { "key": "hunter", "name": "Hunter",
+      "config_id": "REPLACE_WITH_PROVIDER_ID_HUNTER",
+      "group": null, "enabled": true,
+      "request": { "method": "GET", "path": "/v2/email-finder",
+        "query": [
+          { "key": "domain",     "value": "{{input.domain}}" },
+          { "key": "first_name", "value": "{{input.first_name}}" },
+          { "key": "last_name",  "value": "{{input.last_name}}" }
+        ],
+        "headers": [], "body_type": "none", "body": null },
+      "run_condition": null,
+      "success_condition": { "all": [
+        { "path": "status", "op": "eq", "value": 200 },
+        { "path": "output.email", "op": "not_empty" },
+        { "path": "body.data.score", "op": "gte", "value": 70 }
+      ] },
+      "output_map": [
+        { "field": "email",      "from": "{{response.body.data.email}}", "transform": "lower" },
+        { "field": "confidence", "from": "{{response.body.data.score}}", "transform": "number" }
+      ],
+      "on_success": "stop", "on_failure": "continue",
+      "timeout_ms": null, "max_key_attempts": null, "cost_per_call_cents": 12 }
+  ],
+  "outputs": [
+    { "field": "email", "description": "Verified work email" },
+    { "field": "confidence" },
+    { "field": "source" }
+  ],
+  "settings": {
+    "required_outputs": ["email"],
+    "cache_key_fields": null, "cache_key_exclude": [],
+    "cache_key_normalize": true, "group_merge": {}, "max_parallel": 5
+  }
 }</code></pre>
+<p>Why it works: <code>required_outputs: ["email"]</code> makes the default success rule "2xx AND email non-empty", so Prospeo returning <code>200 {"email": null}</code> counts as a miss and the run falls through. Hunter layers a custom rule on top: its answer only counts at score ≥ 70. Each step stamps or maps only what it can vouch for, and first-write-wins merging keeps earlier answers intact.</p>
 
-<table>
-  <tr><th><code>status</code></th><th>Meaning</th><th>HTTP</th></tr>
-  <tr><td><code>success</code></td><td>A provider answered; every required field is filled</td><td>200</td></tr>
-  <tr><td><code>partial</code></td><td>Some fields found, but not all required ones</td><td>200</td></tr>
-  <tr><td><code>miss</code></td><td>Everyone replied; nobody had it</td><td>200</td></tr>
-  <tr><td><code>error</code></td><td>Something broke — unreachable provider, out of time</td><td>502</td></tr>
-</table>
+<h2 id="limits">14 · Limits &amp; troubleshooting</h2>
+<h3>Hard limits</h3>
+<p>steps ≤ 12 · inputs ≤ 30 · query params ≤ 30/step · headers ≤ 30/step · output_map ≤ 40/step · rule nodes ≤ 200/condition · max_parallel 1–8 · timeout_ms 500–45000 · max_key_attempts 1–5 · run body ≤ 128&nbsp;KB · whole-run budget 50&nbsp;s.</p>
+<h3>Common problems</h3>
+<div class="tablewrap"><table>
+  <tr><th>Symptom</th><th>Cause / fix</th></tr>
+  <tr><td>"Someone else saved changes…" on save</td><td>The optimistic lock: another tab/person saved first. Reload, redo, save.</td></tr>
+  <tr><td>A field comes back empty though the provider had it</td><td>Open the run (or test run) and check <code>unresolved</code> — the mapping path doesn't match the real response shape. Fix the <code>from</code> path.</td></tr>
+  <tr><td>Waterfall stops at a provider that returned nothing</td><td><code>required_outputs</code> is empty, so any 2xx counts as an answer. Set it.</td></tr>
+  <tr><td>Step shows "Provider gone"</td><td>Its provider was deleted. Pick a new one in the step's Provider dropdown. (Deleting a provider that live endpoints use is blocked with the list of them.)</td></tr>
+  <tr><td>"…uses providers that aren't available to you"</td><td>The definition names provider ids from another account or that no longer exist — reassign in the visual editor.</td></tr>
+  <tr><td>Automation treats a miss as failure</td><td>It's branching on HTTP code. A miss is 200 — branch on the <code>status</code> field.</td></tr>
+  <tr><td>429 on runs</td><td>That key's per-minute limit (Settings). Raise it, or issue separate keys per tool.</td></tr>
+</table></div>
 
-<div class="warn"><strong>A miss is HTTP 200, not 404.</strong> Clay, n8n,
-Make and Zapier treat any non-2xx as a failure and will retry the row or halt
-the table — so "no email found" is a successful response that says so. Branch
-on the <code>status</code> field, never on the HTTP code.</div>
-
-<p class="muted">Other responses: 401 bad/missing key · 400 invalid input
-(with per-field details) · 413 body too large · 429 rate limited (with
-<code>Retry-After</code>) · 503 endpoint turned off · 409 endpoint has no
-steps.</p>
-
-<h2 id="reference">5 · Reference</h2>
-
-<table>
+<h3>Route reference</h3>
+<div class="tablewrap"><table>
   <tr><th>Method</th><th>Route</th><th>Auth</th><th>Purpose</th></tr>
   <tr><td>ALL</td><td><code>/api/proxy/[configId]/[...path]</code></td><td>master key</td><td>Pass-through proxy with key rotation</td></tr>
   <tr><td>POST</td><td><code>/api/run/[slug]</code></td><td>endpoint key</td><td>Run a waterfall</td></tr>
   <tr><td colspan="4" class="muted">Everything else (creating providers/endpoints, saving definitions, keys, runs, settings) is the dashboard's session-authenticated API — the full table is in the project README.</td></tr>
-</table>
+</table></div>
 
 <p class="muted" style="margin-top:28px">
-  Machine-readable definition spec: <a href="llm.txt">/docs/llm.txt</a> ·
-  Dashboard: <a href="/">home</a>
+  Machine-readable spec: <a href="llm.txt">/docs/llm.txt</a> · Dashboard: <a href="/">home</a>
 </p>
 </main>
 </body>
