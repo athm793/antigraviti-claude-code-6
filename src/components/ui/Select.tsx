@@ -1,15 +1,8 @@
 "use client";
 
-import {
-  useCallback,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Check } from "./Icon";
+import { Popover, isInsidePopover } from "./Popover";
 import { inputCls, inputInvalidCls } from "@/lib/ui";
 
 /**
@@ -20,9 +13,9 @@ import { inputCls, inputInvalidCls } from "@/lib/ui";
  * the full combobox pattern — keyboard, ARIA, type-ahead — because a dropdown
  * that only works with a mouse fails as soon as someone tabs into it.
  *
- * No portal, matching ConfirmModal. Consequence: an ancestor with
- * overflow-hidden will clip the popover. It flips upward near the viewport
- * bottom instead of being cut off.
+ * The list renders through Popover, i.e. in a portal: these appear inside
+ * tables wrapped in overflow-x-auto, which would otherwise clip the panel and
+ * add a stray scrollbar.
  */
 
 export type SelectOption = {
@@ -65,7 +58,6 @@ export function Select({
 
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [flipUp, setFlipUp] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -88,20 +80,13 @@ export function Select({
     setOpen(true);
   }, [disabled, options, value, firstEnabled]);
 
-  // Decide direction before paint so the popover never visibly jumps.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const rect = triggerRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const below = window.innerHeight - rect.bottom;
-    setFlipUp(below < 280 && rect.top > below);
-  }, [open]);
-
   useEffect(() => {
     if (!open) return;
 
     function onPointerDown(event: PointerEvent) {
-      if (!rootRef.current?.contains(event.target as Node)) close(false);
+      if (rootRef.current?.contains(event.target as Node)) return;
+      if (isInsidePopover(event.target)) return;
+      close(false);
     }
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
@@ -216,16 +201,14 @@ export function Select({
         <ChevronDown className="w-4 h-4 text-[#8b8b9e] shrink-0" />
       </button>
 
-      {open && (
-        <div
-          ref={listRef}
-          id={listboxId}
-          role="listbox"
-          aria-label={ariaLabel}
-          className={`absolute z-30 w-full min-w-full bg-[#111118] border border-[#2a2a38] rounded-lg shadow-xl shadow-black/40 max-h-64 overflow-y-auto py-1 ${
-            flipUp ? "bottom-full mb-1" : "top-full mt-1"
-          }`}
-        >
+      <Popover
+        anchorRef={triggerRef}
+        open={open}
+        id={listboxId}
+        role="listbox"
+        ariaLabel={ariaLabel}
+      >
+        <div ref={listRef}>
           {options.length === 0 && (
             <div className="px-3 py-3 text-sm text-[#8b8b9e]">No options</div>
           )}
@@ -270,7 +253,7 @@ export function Select({
             <div className="border-t border-[#1a1a28] mt-1 pt-1">{footer}</div>
           )}
         </div>
-      )}
+      </Popover>
     </div>
   );
 }

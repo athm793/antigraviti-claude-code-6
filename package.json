@@ -6,7 +6,9 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint src --max-warnings=0"
+    "lint": "eslint src --max-warnings=0",
+    "test:engine": "tsc -p tsconfig.engine.json && node tests/engine.test.mjs",
+    "test": "npm run test:engine"
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.0",

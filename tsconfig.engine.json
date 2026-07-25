@@ -1,0 +1,14 @@
+{
+  "//": "Compiles the pure engine to plain JS so tests/engine.test.mjs can exercise it in Node without a bundler. The engine imports nothing outside itself, which is what makes this possible.",
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "outDir": ".engine-build",
+    "rootDir": "src/lib",
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmitOnError": true
+  },
+  "include": ["src/lib/engine/**/*.ts", "src/lib/endpointTypes.ts"]
+}
