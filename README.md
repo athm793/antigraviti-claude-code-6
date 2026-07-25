@@ -94,14 +94,14 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 - [x] JSON view of a definition, with import/export
 - [x] Opt-in parallel fan-out with declared-order merging
 
-Smaller gaps still open:
+Smaller gaps, all closed:
 
-- [ ] Webhook notification when all keys in a pool are simultaneously exhausted
-- [ ] CSV key import
-- [ ] Sentry / error monitoring integration
-- [ ] `.env.example` file for easier self-hosting
-- [ ] Structured logging in auth and proxy handlers
-- [ ] Session revocation — a token for a deleted user still passes the middleware gate for up to 7 days, because middleware never touches the database
+- [x] Webhook notification when all keys in a pool are simultaneously exhausted — optional per-provider URL, POSTed at most once per 15 minutes (atomic claim in the DB), SSRF-checked at save and again at send
+- [x] CSV key import — the add-keys panel imports CSV/TXT files; the key column is detected by header name or value length, and the keys land in the textarea for an explicit Add
+- [x] Error monitoring — set `SENTRY_DSN` and unhandled server errors are POSTed to the DSN's envelope endpoint (no SDK, no bundle weight, inert when unset); headers/cookies/bodies/query strings are never sent
+- [x] `.env.example` — every variable the app reads, with comments
+- [x] Structured logging — one JSON line per event (`login_failed`, `login_succeeded`, `proxy_request`, `exhaustion_webhook`) with allowlisted fields, never secrets
+- [x] Session revocation — every page and API route resolves the viewer from the database per request, and gated static files (`/brain/`) get the same check in middleware, so deleting a user locks them out immediately even though their cookie stays cryptographically valid
 
 ---
 
@@ -115,7 +115,7 @@ You need:
 1. A [Neon](https://neon.tech) database (free tier works)
 2. A random 32-byte hex string for `SESSION_SECRET`
 
-The schema creates itself on first run.
+Everything else is optional — see [`.env.example`](.env.example) for the full annotated list (`CRON_SECRET`, `SENTRY_DSN`, proxy timeout tuning). The schema creates itself on first run.
 
 **Self-host:**
 

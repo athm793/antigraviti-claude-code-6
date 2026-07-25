@@ -63,11 +63,13 @@ export default async function ConfigDetailPage({
       <Section title="Key pool">
         <StatsBar stats={stats} configId={config.id} />
         <p className="text-[#8b8b9e] text-xs">
-          <span className="text-[#00C4B4]">Active</span> keys are used for new requests.{" "}
-          <span className="text-red-400">Exhausted</span> keys hit a rate limit and won&apos;t
-          be retried.{" "}
-          <span className="text-amber-400">Cooldown</span> keys hit a rate limit but will
-          automatically go active again after the cooldown period.
+          <span className="text-[#00C4B4]">Active</span>{" "}
+          keys are used for new requests.{" "}
+          <span className="text-red-400">Exhausted</span>{" "}
+          keys hit a rate limit and won&apos;t be retried.{" "}
+          <span className="text-amber-400">Cooldown</span>{" "}
+          keys hit a rate limit but will automatically go active again after the cooldown
+          period.
         </p>
         <TestConnectionButton configId={config.id} />
       </Section>

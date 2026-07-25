@@ -27,6 +27,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
     auth_header_prefix: config.auth_header_prefix,
     rate_limit_codes: config.rate_limit_codes.join(", "),
     cooldown_minutes: String(config.cooldown_minutes),
+    webhook_url: config.webhook_url ?? "",
   });
 
   function set(field: string, value: string) {
@@ -54,6 +55,7 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
           auth_header_prefix: form.auth_header_prefix,
           rate_limit_codes: rateLimitCodes,
           cooldown_minutes: parseInt(form.cooldown_minutes, 10) || 0,
+          webhook_url: form.webhook_url.trim() || null,
         }),
       });
 
@@ -113,6 +115,15 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
               {config.cooldown_minutes === 0
                 ? "Skip forever (no retry)"
                 : `${config.cooldown_minutes} min cooldown then retry`}
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className={metaLabelCls}>Exhaustion webhook</div>
+            <div
+              className="text-[#c8c8d8] text-sm truncate"
+              data-tip={config.webhook_url ? config.webhook_url : undefined}
+            >
+              {config.webhook_url ? config.webhook_url : "Off"}
             </div>
           </div>
         </div>
@@ -175,6 +186,21 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
                 className={inputCls}
               />
             </Field>
+            <div className="sm:col-span-2">
+              <Field
+                label="Exhaustion webhook URL (optional)"
+                hint="POSTed to when every key in the pool is exhausted at once — at most one message per 15 minutes. Leave empty to turn off."
+              >
+                <input
+                  type="url"
+                  pattern="https?://.+"
+                  value={form.webhook_url}
+                  onChange={(e) => set("webhook_url", e.target.value)}
+                  placeholder="https://hooks.slack.com/…"
+                  className={inputCls}
+                />
+              </Field>
+            </div>
           </div>
 
           {error && <p className={errorBoxCls}>{error}</p>}

@@ -4,6 +4,7 @@ import {
   recoverCooldownKeys,
   sanitizeResponseHeaders,
 } from "./rotation";
+import { logEvent } from "./log";
 
 /**
  * Pass-through proxy.
@@ -30,6 +31,19 @@ export async function handleProxyRequest(
     method,
     headers: incomingHeaders,
     body,
+  });
+
+  // Path only — never the query string, which routinely carries lookup
+  // subjects (emails, names) that don't belong in an ops log.
+  logEvent(result.ok ? "info" : "warn", "proxy_request", {
+    config_id: config.id,
+    method,
+    path,
+    outcome: result.ok ? "ok" : (result.error?.kind ?? "unknown"),
+    upstream_status: result.ok && result.response ? result.response.status : null,
+    attempts: result.attempts,
+    keys_exhausted: result.keysExhausted,
+    latency_ms: result.latencyMs,
   });
 
   if (result.ok && result.response) {

@@ -90,6 +90,11 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_owner ON proxy_configs(owner_user_id)`;
 
+  // Optional exhaustion webhook: where to POST when every key in the pool is
+  // simultaneously exhausted, and when we last did (the debounce marker).
+  await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS webhook_url TEXT`;
+  await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS webhook_notified_at TIMESTAMPTZ`;
+
   await initEndpointSchema(sql);
 
   schemaInitialized = true;
@@ -123,6 +128,7 @@ function rowToConfig(row: Record<string, unknown>): ProxyConfig {
     cooldown_minutes: row.cooldown_minutes as number,
     master_key: row.master_key as string,
     owner_user_id: (row.owner_user_id as string | null) ?? null,
+    webhook_url: (row.webhook_url as string | null) ?? null,
     created_at: toISOString(row.created_at),
   };
 }
@@ -231,9 +237,9 @@ export async function createConfig(
   const masterKey = uuidv4();
   const rows = await sql`
     INSERT INTO proxy_configs
-      (id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes, cooldown_minutes, master_key, owner_user_id)
+      (id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes, cooldown_minutes, master_key, owner_user_id, webhook_url)
     VALUES
-      (${id}, ${data.name}, ${data.target_base_url}, ${data.auth_header_name}, ${data.auth_header_prefix}, ${data.rate_limit_codes}, ${data.cooldown_minutes}, ${masterKey}, ${ownerUserId})
+      (${id}, ${data.name}, ${data.target_base_url}, ${data.auth_header_name}, ${data.auth_header_prefix}, ${data.rate_limit_codes}, ${data.cooldown_minutes}, ${masterKey}, ${ownerUserId}, ${data.webhook_url ?? null})
     RETURNING *
   `;
   return rowToConfig(rows[0] as Record<string, unknown>);
@@ -255,7 +261,8 @@ export async function updateConfig(
       auth_header_name   = ${data.auth_header_name ?? existing.auth_header_name},
       auth_header_prefix = ${data.auth_header_prefix ?? existing.auth_header_prefix},
       rate_limit_codes   = ${data.rate_limit_codes ?? existing.rate_limit_codes},
-      cooldown_minutes   = ${data.cooldown_minutes ?? existing.cooldown_minutes}
+      cooldown_minutes   = ${data.cooldown_minutes ?? existing.cooldown_minutes},
+      webhook_url        = ${data.webhook_url === undefined ? existing.webhook_url : data.webhook_url}
     WHERE id = ${id}
     RETURNING *
   `;
@@ -459,6 +466,29 @@ export async function insertKeys(
   );
 
   return { inserted: newKeys.length, skipped };
+}
+
+/**
+ * Atomic debounce claim for the exhaustion webhook. Under a burst of traffic
+ * dozens of requests hit "all keys exhausted" in the same second — only the
+ * one that wins this conditional UPDATE sends the notification; the rest see
+ * zero rows and stay quiet. The interval is the re-arm time.
+ */
+export async function claimExhaustionNotify(
+  configId: string,
+  debounceMinutes: number
+): Promise<boolean> {
+  const sql = getSQL();
+  const rows = await sql`
+    UPDATE proxy_configs
+    SET webhook_notified_at = NOW()
+    WHERE id = ${configId}
+      AND webhook_url IS NOT NULL
+      AND (webhook_notified_at IS NULL
+           OR webhook_notified_at < NOW() - (${debounceMinutes} * INTERVAL '1 minute'))
+    RETURNING id
+  `;
+  return rows.length > 0;
 }
 
 export async function incrementRequestCount(keyId: number): Promise<void> {

@@ -14,6 +14,20 @@
 
 <div class="log-entry">
   <div class="date">25 Jul 2026</div>
+  <h3>README "smaller gaps" closed — all six <span class="status done">Shipped</span></h3>
+  <ul>
+    <li><strong>Session revocation.</strong> Audit result: every session API route and every data page already resolved the viewer from the DB; the residual exposure for a deleted user's still-valid token was the two client-only "new" form shells and the gated static <code>/brain/</code> files. Fixed all three: server guards on <code>configs/new</code> + <code>endpoints/new</code>, and middleware now does a fail-closed <code>SELECT 1 FROM users</code> (edge-safe, direct Neon query) for <code>/brain/</code> only — pages/APIs keep their own checks, so no double round trip. Verified live: valid-signature token with a nonexistent uid → 307; real uid → 200.</li>
+    <li><strong>Exhaustion webhook.</strong> Optional per-provider <code>webhook_url</code> (schema migration + both forms + PATCH/POST validation). Fires from inside <code>executeWithRotation</code> when the pool dies (covers proxy AND waterfall), fire-and-forget, debounced by an atomic conditional-UPDATE claim (15 min re-arm) so a burst sends exactly one message. SSRF-checked at save and again at send; outcomes audit-logged. Verified: claim true-then-false against the dev DB; private/localhost URLs 400 on PATCH, valid saves, empty clears.</li>
+    <li><strong>CSV key import.</strong> Import button on the add-keys panel; minimal quoted-CSV parser, key column picked by header (<code>api_key</code>/key/secret/token) or longest-average-value fallback; loads into the textarea for an explicit Add, never auto-submits. Verified live: 3-column CSV with a quoted embedded comma → exactly the 3 keys extracted.</li>
+    <li><strong>Structured logging.</strong> <code>lib/log.ts</code> — one JSON line per event, allowlisted fields only. Wired: <code>login_failed</code>/<code>login_succeeded</code>, <code>proxy_request</code> (path only, never the query string — lookup subjects live there), <code>exhaustion_webhook</code>.</li>
+    <li><strong>Error monitoring without the SDK.</strong> <code>src/instrumentation.ts</code> <code>onRequestError</code> POSTs a Sentry envelope to <code>SENTRY_DSN</code> when set — no dependency, inert when unset; sends type/message/stack/route/method, never headers, cookies, bodies or query strings.</li>
+    <li><strong>.env.example</strong> — every env var the app reads (grep-verified list), annotated.</li>
+    <li>Also fixed in passing: "Exhaustedkeys" whitespace jam on the provider page key-pool caption (same JSX class as the Phase-5 "Share of answersis" fix).</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
   <h3>Public API docs + LLM-consumable definition spec <span class="status done">Shipped</span></h3>
   <ul>
     <li>Two equally comprehensive docs. <code>/docs/llm.txt</code> — complete machine-readable spec of the definition JSON: schema, template language, all 18 operators, execution semantics, limits, three worked examples up to a parallel-race + conditional-mop-up definition, a 10-point LLM-mistake checklist, and a ready prompt template. <code>/docs/index.html</code> — the same material as a 14-section human reference: proxy setup + rotation behaviour + the proxy's own error table (<code>"proxy": true</code> marker, verified against <code>proxy.ts</code>), builder walkthrough, full definition/template/condition reference, execution semantics, run API incl. per-field trace documentation, caching, analytics + retention, endpoint keys, the LLM workflow, the validated worked example, and troubleshooting. First draft of the human page was a thin quickstart; rewritten after user feedback that both docs must match in depth.</li>

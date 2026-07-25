@@ -93,8 +93,9 @@
   <tr><td>Auth header name + prefix</td><td>How this API expects its key: <code>Authorization</code> + <code>Bearer&nbsp;</code>, or <code>X-Api-Key</code> with an empty prefix, etc. Check the provider's own docs — this is the single thing you must get right, because every proxied call and every waterfall step authenticates through it.</td></tr>
   <tr><td>Rate-limit status codes</td><td>Which responses mean "this key is spent" — usually just <code>429</code>. Only 400–599 are accepted (a success code here would make the proxy retry its own successes).</td></tr>
   <tr><td>Cooldown (minutes)</td><td>How long a rate-limited key rests before being retried automatically. <code>0</code> = benched until you press "Reset all keys".</td></tr>
+  <tr><td>Exhaustion webhook (optional)</td><td>A URL KeyProxy POSTs to the moment <em>every</em> key in the pool is exhausted at once — the condition where live traffic starts failing with 503s. Payload: <code>{event: "pool_exhausted", provider_id, provider_name, attempts, keys_exhausted, at}</code>. At most one message per 15 minutes per provider, delivery is fire-and-forget (never slows the request that discovered it), and the URL follows the same public-internet rules as the target URL. Deliveries and failures appear in the provider's activity log.</td></tr>
 </table></div>
-<p>Then paste your API keys on the provider page, one per line. Keys never leave the server; the dashboard only ever shows a <code>••••1234</code> preview.</p>
+<p>Then add your API keys on the provider page — paste them one per line, or use <strong>Import CSV</strong> to load a CSV/TXT export (the key column is detected by header name or, failing that, by value length; the keys land in the textarea for you to review before adding). Keys never leave the server; the dashboard only ever shows a <code>••••1234</code> preview.</p>
 
 <h3>Calling the proxy</h3>
 <pre><code># Before — direct, one key, dies on rate limits

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { neon } from "@neondatabase/serverless";
 import { SESSION_COOKIE_NAME, verifyToken } from "./lib/sessionToken";
 
 // Routes that never require a logged-in session.
@@ -32,6 +33,31 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
+// Static content that only the middleware protects. Pages and API routes all
+// re-resolve the viewer from the database themselves (getCurrentUser /
+// authorize*), so deleting a user locks them out of those immediately even
+// though their token stays cryptographically valid for up to 7 days. Static
+// files have no such second check — for these prefixes the middleware itself
+// confirms the user still exists before serving.
+const GATED_STATIC_PREFIXES = ["/brain/"];
+
+/**
+ * Does this uid still exist? Direct one-column query rather than usersDb —
+ * that module pulls in password hashing (node crypto), which the edge runtime
+ * can't load. Fails closed: any error means "no".
+ */
+async function userStillExists(uid: string): Promise<boolean> {
+  const url = process.env.DATABASE_URL;
+  if (!url) return false;
+  try {
+    const sql = neon(url);
+    const rows = await sql`SELECT 1 FROM users WHERE id = ${uid}`;
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
@@ -43,7 +69,11 @@ export async function middleware(req: NextRequest) {
   const session = token ? await verifyToken(token) : null;
 
   if (session) {
-    return NextResponse.next();
+    // Gated statics get the database check here; everything else does its own.
+    const gatedStatic = GATED_STATIC_PREFIXES.some((p) => pathname.startsWith(p));
+    if (!gatedStatic || (await userStillExists(session.uid))) {
+      return NextResponse.next();
+    }
   }
 
   if (pathname.startsWith("/api/")) {

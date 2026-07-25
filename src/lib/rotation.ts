@@ -6,6 +6,7 @@ import {
   resetCooldownKeys,
 } from "./db";
 import { assertResolvesPublic } from "./validation";
+import { notifyPoolExhausted } from "./exhaustionWebhook";
 
 /**
  * The key-rotation engine.
@@ -188,6 +189,11 @@ export async function executeWithRotation(
 
     const key = await getActiveKey(config.id, exclude);
     if (!key) {
+      if (attempts > 0) {
+        // The pool just died under us. Fire-and-forget — the notification
+        // must never slow down or fail the request that discovered it.
+        void notifyPoolExhausted(config, { attempts, keysExhausted });
+      }
       return base({
         attempts,
         keysExhausted,
@@ -262,6 +268,7 @@ export async function executeWithRotation(
     };
   }
 
+  void notifyPoolExhausted(config, { attempts, keysExhausted });
   return base({
     attempts,
     keysExhausted,

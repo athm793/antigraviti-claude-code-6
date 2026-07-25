@@ -10,6 +10,8 @@ export interface ProxyConfig {
   cooldown_minutes: number;
   master_key: string;
   owner_user_id: string | null;
+  /** POSTed to when every key in the pool is simultaneously exhausted. */
+  webhook_url: string | null;
   created_at: string;
 }
 
@@ -55,6 +57,7 @@ export interface CreateConfigInput {
   auth_header_prefix: string;
   rate_limit_codes: number[];
   cooldown_minutes: number;
+  webhook_url?: string | null;
 }
 
 export interface UpdateConfigInput {
@@ -64,6 +67,8 @@ export interface UpdateConfigInput {
   auth_header_prefix?: string;
   rate_limit_codes?: number[];
   cooldown_minutes?: number;
+  /** null clears it; undefined leaves it unchanged. */
+  webhook_url?: string | null;
 }
 
 export interface InsertKeysResult {

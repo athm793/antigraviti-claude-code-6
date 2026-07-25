@@ -58,6 +58,24 @@ export async function PATCH(
       body.rate_limit_codes = codes;
     }
 
+    // Empty string clears the webhook; a value gets the same egress rules as
+    // the target URL, because this is a server-originated POST.
+    if (body.webhook_url !== undefined) {
+      const trimmed = typeof body.webhook_url === "string" ? body.webhook_url.trim() : "";
+      if (trimmed) {
+        const webhookCheck = checkPublicHttpTarget(trimmed);
+        if (!webhookCheck.ok) {
+          return Response.json(
+            { error: `Webhook URL: ${webhookCheck.message}` },
+            { status: 400 }
+          );
+        }
+        body.webhook_url = trimmed;
+      } else {
+        body.webhook_url = null;
+      }
+    }
+
     const updated = await updateConfig(id, body, auth.config);
     if (!updated) return Response.json({ error: "Not found" }, { status: 404 });
     return Response.json(updated);

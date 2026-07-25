@@ -52,6 +52,18 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Same egress rules as the target URL — this is a server-originated POST.
+    const webhookUrl = body.webhook_url?.trim() || null;
+    if (webhookUrl) {
+      const webhookCheck = checkPublicHttpTarget(webhookUrl);
+      if (!webhookCheck.ok) {
+        return Response.json(
+          { error: `Webhook URL: ${webhookCheck.message}` },
+          { status: 400 }
+        );
+      }
+    }
+
     const config = await createConfig(
       {
         name: body.name,
@@ -60,6 +72,7 @@ export async function POST(req: NextRequest) {
         auth_header_prefix: body.auth_header_prefix ?? "Bearer ",
         rate_limit_codes: rateLimitCodes,
         cooldown_minutes: body.cooldown_minutes ?? 0,
+        webhook_url: webhookUrl,
       },
       user.id
     );
