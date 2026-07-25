@@ -28,13 +28,14 @@ const SOURCES = [
   { value: "response.body", label: "This step's response" },
   { value: "output", label: "This step's mapped output" },
   { value: "status", label: "This step's status code" },
+  { value: "result", label: "What the run has found so far" },
   { value: "input", label: "Endpoint input" },
   { value: "steps", label: "An earlier step" },
 ] as const;
 
 function splitPath(path: string): { source: string; rest: string } {
   if (path === "status" || path.startsWith("status.")) return { source: "status", rest: "" };
-  for (const source of ["response.body", "output", "input", "steps"]) {
+  for (const source of ["response.body", "output", "result", "input", "steps"]) {
     if (path === source) return { source, rest: "" };
     if (path.startsWith(`${source}.`)) return { source, rest: path.slice(source.length + 1) };
   }

@@ -6,13 +6,18 @@ import { SESSION_COOKIE_NAME, verifyToken } from "./lib/sessionToken";
 // - /login, /setup: the auth pages themselves
 // - /api/auth/*: login, logout, setup and "who am I" endpoints
 // - /api/proxy/*, /api/debug/*: authenticated separately via per-config master keys
+// - /api/run/*: the public waterfall endpoint, authenticated by a hashed endpoint key
 // - /api/health: needs to stay reachable by uptime monitors
+//
+// Every prefix keeps its trailing slash on purpose. Matching is startsWith, so
+// "/api/run" without one would also make "/api/runners" public.
 const PUBLIC_PREFIXES = [
   "/login",
   "/setup",
   "/api/auth/",
   "/api/proxy/",
   "/api/debug/",
+  "/api/run/",
   "/api/health",
 ];
 

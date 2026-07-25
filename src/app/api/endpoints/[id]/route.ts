@@ -81,6 +81,9 @@ export async function PATCH(
       ["cache_ttl_seconds", "cache_ttl_seconds", 0, 60 * 60 * 24 * 30],
       ["run_deadline_ms", "run_deadline_ms", 1000, 50_000],
       ["log_retention_days", "log_retention_days", 1, 365],
+      // 0 disables the limit. The ceiling is a backstop, not a target: each run
+      // buys upstream calls, so this is a spend control.
+      ["rate_limit_per_minute", "rate_limit_per_minute", 0, 10_000],
     ];
     for (const [key, field, min, max] of numeric) {
       const raw = body[key];

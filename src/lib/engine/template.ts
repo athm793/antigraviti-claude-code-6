@@ -14,7 +14,7 @@ import {
  */
 
 /** Roots a template may read. A closed list: `env` and `process` are not here. */
-export const TEMPLATE_ROOTS = ["input", "steps", "response", "run"] as const;
+export const TEMPLATE_ROOTS = ["input", "steps", "response", "result", "run"] as const;
 
 export interface TemplateContext {
   input: Record<string, unknown>;
@@ -34,6 +34,14 @@ export interface TemplateContext {
     headers: Record<string, string>;
     body: unknown;
   };
+  /**
+   * Everything the run has resolved so far, merged across previous steps.
+   *
+   * This is what "only call this vendor if we still have no email" reads from.
+   * Without it the same question has to be asked as a list of every earlier
+   * step, which breaks the moment a step is added in the middle.
+   */
+  result: Record<string, unknown>;
   run: { id: string; started_at: string };
 }
 

@@ -34,6 +34,7 @@ function describePath(path: string, definition: EndpointDefinition): string {
 
   if (path.startsWith("input.")) return `the ${path.slice("input.".length)} you send in`;
   if (path.startsWith("output.")) return `its ${path.slice("output.".length)}`;
+  if (path.startsWith("result.")) return `the ${path.slice("result.".length)} found so far`;
   if (path.startsWith("response.body.")) return `its ${path.slice("response.body.".length)}`;
   return path;
 }

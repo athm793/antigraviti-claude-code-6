@@ -1,6 +1,8 @@
 import { type NextRequest } from "next/server";
 import { saveDefinition } from "@/lib/endpointsDb";
 import { authorizeEndpoint, configAuthResponse } from "@/lib/auth";
+import { checkStepProviders } from "@/lib/endpointGuards";
+import { validateEndpointDefinition } from "@/lib/engine/validate";
 import { checkRateLimit } from "@/lib/rateLimit";
 import type { EndpointDefinition } from "@/lib/endpointTypes";
 
@@ -38,7 +40,26 @@ export async function PUT(
       return Response.json({ error: "Invalid revision" }, { status: 400 });
     }
 
-    const result = await saveDefinition(id, body.definition, expected, body.note);
+    // The same validator the builder runs against every keystroke. Sharing it
+    // is the point: if the server accepted things the UI refuses (or the
+    // reverse) you'd get definitions that save but can't run.
+    const validated = validateEndpointDefinition(body.definition);
+    if (!validated.ok) {
+      return Response.json(
+        {
+          error: "This waterfall has problems that would stop it running",
+          issues: validated.issues,
+        },
+        { status: 400 }
+      );
+    }
+
+    const providers = await checkStepProviders(auth.user, validated.value);
+    if (!providers.ok) {
+      return Response.json({ error: providers.message }, { status: 403 });
+    }
+
+    const result = await saveDefinition(id, validated.value, expected, body.note);
 
     if (!result.ok) {
       if (result.reason === "not_found") {

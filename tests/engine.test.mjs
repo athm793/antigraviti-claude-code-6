@@ -13,6 +13,8 @@ import { evaluateRule, defaultSuccessRule } from "../.engine-build/engine/rules.
 import { applyOutputMap, mergeOutput, collectOutput } from "../.engine-build/engine/mapping.js";
 import { buildStepRequest } from "../.engine-build/engine/request.js";
 import { validateEndpointDefinition } from "../.engine-build/engine/validate.js";
+import { runEndpoint } from "../.engine-build/engine/execute.js";
+import { validateRunInput } from "../.engine-build/engine/input.js";
 
 let pass = 0;
 const failures = [];
@@ -266,6 +268,250 @@ const splitGroup = validateEndpointDefinition(def([
   baseStep({ key: "c", name: "C", group: "g" }),
 ]));
 ok("non-contiguous parallel group rejected", !splitGroup.ok);
+
+// ----------------------------------------------------------------- executor
+//
+// The executor decides how many paid upstream calls a request makes, so what
+// matters here is not only what it returns but which providers it *didn't*
+// call. Every fake below records that.
+
+function fakeDeps(responses, clock = { t: 0 }) {
+  const called = [];
+  return {
+    called,
+    clock,
+    deps: {
+      now: () => clock.t,
+      getProvider: (id) =>
+        id === "gone" ? null : { id, name: `Provider ${id}`, auth_header_name: "X-API-KEY" },
+      call: async (step) => {
+        called.push(step.key);
+        const canned = responses[step.key] ?? { status: 200, body: {} };
+        clock.t += canned.latency ?? 10;
+        if (canned.fail) {
+          return {
+            ok: false, status: null, headers: {}, body: null, bodyText: "",
+            url: "https://api.example.com/x", attempts: canned.attempts ?? 1,
+            keysExhausted: 0, latencyMs: canned.latency ?? 10,
+            error: { kind: "fetch_failed", detail: "Could not reach the upstream API" },
+          };
+        }
+        return {
+          ok: true, status: canned.status, headers: {}, body: canned.body,
+          bodyText: JSON.stringify(canned.body), url: "https://api.example.com/x",
+          attempts: canned.attempts ?? 1, keysExhausted: canned.keysExhausted ?? 0,
+          latencyMs: canned.latency ?? 10, error: null,
+        };
+      },
+    },
+  };
+}
+
+const emailStep = (over = {}) => baseStep({
+  output_map: [{ field: "email", from: "{{response.body.email}}", transform: "none" }],
+  ...over,
+});
+
+const waterfall = (steps, settings = { required_outputs: ["email"] }) =>
+  def(steps, { settings });
+
+async function run(definition, responses, extra = {}) {
+  const fake = fakeDeps(responses, { t: 0 });
+  const result = await runEndpoint({
+    runId: "run-test",
+    definition,
+    input: extra.input ?? {},
+    deps: fake.deps,
+    deadlineAt: extra.deadlineAt ?? 60_000,
+    ...extra.options,
+  });
+  return { result, called: fake.called };
+}
+
+// The behaviour the entire feature rests on: a 200 with an empty field is not
+// an answer, and the waterfall must carry on to the next provider.
+const fallthrough = await run(
+  waterfall([emailStep({ key: "a" }), emailStep({ key: "b", name: "B" })]),
+  { a: { status: 200, body: { email: null } }, b: { status: 200, body: { email: "x@acme.com" } } }
+);
+check("200 with an empty field falls through to the next provider",
+  fallthrough.called, ["a", "b"]);
+check("the provider that answered is the one recorded",
+  fallthrough.result.resolved_by, "b");
+check("run status is success", fallthrough.result.status, "success");
+check("output is normalized across providers",
+  fallthrough.result.output.email, "x@acme.com");
+
+// The money test: a hit must not pay the vendors below it.
+const stopsEarly = await run(
+  waterfall([emailStep({ key: "a" }), emailStep({ key: "b", name: "B" })]),
+  { a: { status: 200, body: { email: "first@acme.com" } }, b: { status: 200, body: { email: "second@acme.com" } } }
+);
+check("a hit stops the waterfall — later providers are never called",
+  stopsEarly.called, ["a"]);
+check("the winner's raw response comes back untouched",
+  stopsEarly.result.raw, { email: "first@acme.com" });
+
+// on_success: continue turns the same shape into a chain.
+const chain = await run(
+  waterfall([
+    emailStep({ key: "a", on_success: "continue" }),
+    baseStep({
+      key: "b", name: "B",
+      output_map: [{ field: "phone", from: "{{response.body.phone}}", transform: "none" }],
+    }),
+  ]),
+  { a: { status: 200, body: { email: "x@acme.com" } }, b: { status: 200, body: { phone: "+1" } } }
+);
+check("carry-on gathers fields from several providers", chain.called, ["a", "b"]);
+check("chained output merges", chain.result.output, { email: "x@acme.com", phone: "+1" });
+
+// A skipped step must cost nothing and say why.
+const skipped = await run(
+  waterfall([
+    emailStep({ key: "a" }),
+    emailStep({ key: "b", name: "B", run_condition: { all: [{ path: "result.email", op: "empty" }] } }),
+  ]),
+  { a: { status: 200, body: { email: "x@acme.com" } }, b: { status: 200, body: { email: "y@acme.com" } } },
+);
+check("a condition that reads what the run already found skips the step",
+  skipped.called, ["a"]);
+
+const runsWhenMissing = await run(
+  waterfall([
+    emailStep({ key: "a", on_success: "continue" }),
+    emailStep({ key: "b", name: "B", run_condition: { all: [{ path: "result.email", op: "empty" }] } }),
+  ]),
+  { a: { status: 200, body: { email: null } }, b: { status: 200, body: { email: "y@acme.com" } } },
+);
+check("the same condition runs the step when the field is still missing",
+  runsWhenMissing.called, ["a", "b"]);
+
+// Two different reasons a step didn't run, told apart. Both read as "skipped"
+// in the log, and confusing them sends you debugging the wrong thing.
+check("a stop earlier in the waterfall says so",
+  skipped.result.steps[1].skip_reason, "Stopped after step 1");
+
+const conditionSkipped = await run(
+  waterfall([
+    emailStep({ key: "a", on_success: "continue" }),
+    emailStep({ key: "b", name: "B", run_condition: { all: [{ path: "result.email", op: "empty" }] } }),
+  ]),
+  { a: { status: 200, body: { email: "x@acme.com" } }, b: { status: 200, body: { email: "y@acme.com" } } },
+);
+check("an unmet condition says that instead",
+  conditionSkipped.result.steps[1].skip_reason, "Its condition wasn't met");
+check("and the step is not called", conditionSkipped.called, ["a"]);
+ok("the condition trace is kept, so 'why was this skipped?' is answerable",
+  conditionSkipped.result.steps[1].run_condition?.result === false);
+
+// A later step reading an earlier one's mapped output.
+const chained = await run(
+  waterfall([
+    emailStep({ key: "a", on_success: "continue" }),
+    baseStep({
+      key: "b", name: "B",
+      request: { method: "GET", path: "/verify", query: [{ key: "email", value: "{{steps.a.output.email}}" }], headers: [], body_type: "none", body: null },
+      output_map: [{ field: "valid", from: "{{response.body.valid}}", transform: "boolean" }],
+    }),
+  ]),
+  { a: { status: 200, body: { email: "x@acme.com" } }, b: { status: 200, body: { valid: "true" } } }
+);
+check("a transform is applied to the mapped value", chained.result.output.valid, true);
+
+// A deleted provider must surface, not crash.
+const gone = await run(
+  waterfall([emailStep({ key: "a", config_id: "gone" }), emailStep({ key: "b", name: "B" })]),
+  { b: { status: 200, body: { email: "x@acme.com" } } }
+);
+check("a step whose provider was deleted is not called", gone.called, ["b"]);
+check("and is reported as such", gone.result.steps[0].status, "config_missing");
+
+// Nothing may start once the clock has run out.
+const outOfTime = await run(
+  waterfall([emailStep({ key: "a" }), emailStep({ key: "b", name: "B" })]),
+  { a: { status: 200, body: { email: null }, latency: 40_000 }, b: { status: 200, body: { email: "x@acme.com" } } },
+  { deadlineAt: 40_500 }
+);
+check("no step starts without enough time left to finish", outOfTime.called, ["a"]);
+check("running out of time with nothing found is an error, not a miss",
+  outOfTime.result.status, "error");
+
+// Everyone answered, nobody had it.
+const allMissed = await run(
+  waterfall([emailStep({ key: "a" }), emailStep({ key: "b", name: "B" })]),
+  { a: { status: 200, body: { email: null } }, b: { status: 200, body: { email: "" } } }
+);
+check("a run where every provider drew a blank is a miss", allMissed.result.status, "miss");
+check("a miss still lists what was required", allMissed.result.missing_outputs, ["email"]);
+
+const partial = await run(
+  waterfall([
+    baseStep({
+      key: "a", on_success: "continue",
+      output_map: [{ field: "name", from: "{{response.body.name}}", transform: "none" }],
+    }),
+    emailStep({ key: "b", name: "B" }),
+  ]),
+  { a: { status: 200, body: { name: "Ana" } }, b: { status: 200, body: { email: null } } }
+);
+check("some fields found but not the required one is partial", partial.result.status, "partial");
+
+// Rotation retries are real HTTP requests and must be counted as such.
+const retried = await run(
+  waterfall([emailStep({ key: "a" })]),
+  { a: { status: 200, body: { email: "x@acme.com" }, attempts: 3, keysExhausted: 2 } }
+);
+check("rotation retries are counted as upstream calls", retried.result.upstream_calls, 3);
+
+const failedCall = await run(
+  waterfall([emailStep({ key: "a" }), emailStep({ key: "b", name: "B" })]),
+  { a: { fail: true }, b: { status: 200, body: { email: "x@acme.com" } } }
+);
+check("an unreachable provider doesn't stop the waterfall", failedCall.called, ["a", "b"]);
+check("and is marked as an error, not a miss", failedCall.result.steps[0].status, "error");
+
+const hardFail = await run(
+  waterfall([emailStep({ key: "a", on_failure: "fail" }), emailStep({ key: "b", name: "B" })]),
+  { a: { fail: true }, b: { status: 200, body: { email: "x@acme.com" } } }
+);
+check("on_failure fail stops everything", hardFail.called, ["a"]);
+check("and fails the run", hardFail.result.status, "error");
+
+ok("bodies are withheld from the trace unless asked for",
+  fallthrough.result.steps[0].response_preview === null &&
+  fallthrough.result.steps[0].request === null,
+  "run logs hold contact data, so previews are opt-in");
+
+const disabled = await run(
+  waterfall([emailStep({ key: "a", enabled: false }), emailStep({ key: "b", name: "B" })]),
+  { b: { status: 200, body: { email: "x@acme.com" } } }
+);
+check("a disabled step is never called", disabled.called, ["b"]);
+
+// ------------------------------------------------------------- input schema
+const fields = [
+  { name: "domain", type: "string", required: true },
+  { name: "limit", type: "number", required: false },
+  { name: "verified", type: "boolean", required: false },
+];
+
+ok("a missing required input is rejected before any provider is called",
+  !validateRunInput(fields, { limit: 5 }).ok);
+ok("an empty string does not satisfy a required input",
+  !validateRunInput(fields, { domain: "  " }).ok);
+check("numbers sent as text are coerced",
+  validateRunInput(fields, { domain: "acme.com", limit: "50" }).value.limit, 50);
+check("booleans sent as text are coerced",
+  validateRunInput(fields, { domain: "acme.com", verified: "true" }).value.verified, true);
+ok("a non-numeric number is rejected",
+  !validateRunInput(fields, { domain: "acme.com", limit: "many" }).ok);
+ok("an array body is rejected with its own message",
+  !validateRunInput(fields, [{ domain: "acme.com" }]).ok);
+check("undeclared fields are surfaced rather than silently ignored",
+  validateRunInput(fields, { domain: "acme.com", doamin: "typo" }).unknown, ["doamin"]);
+ok("undeclared fields never reach the templates",
+  validateRunInput(fields, { domain: "acme.com", doamin: "typo" }).value.doamin === undefined);
 
 console.log(`\n  passed: ${pass}`);
 if (failures.length) {

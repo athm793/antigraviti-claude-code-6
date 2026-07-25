@@ -42,6 +42,7 @@ function rowToEndpoint(row: Row): Endpoint {
     run_deadline_ms: row.run_deadline_ms as number,
     log_retention_days: row.log_retention_days as number,
     log_bodies: row.log_bodies as boolean,
+    rate_limit_per_minute: (row.rate_limit_per_minute as number) ?? 60,
     created_at: toISO(row.created_at),
     updated_at: toISO(row.updated_at),
   };
@@ -288,6 +289,7 @@ export async function updateEndpointSettings(
     run_deadline_ms?: number;
     log_retention_days?: number;
     log_bodies?: boolean;
+    rate_limit_per_minute?: number;
   }
 ): Promise<Endpoint | null> {
   const sql = getSQL();
@@ -305,6 +307,7 @@ export async function updateEndpointSettings(
       run_deadline_ms    = ${data.run_deadline_ms ?? existing.run_deadline_ms},
       log_retention_days = ${data.log_retention_days ?? existing.log_retention_days},
       log_bodies         = ${data.log_bodies ?? existing.log_bodies},
+      rate_limit_per_minute = ${data.rate_limit_per_minute ?? existing.rate_limit_per_minute},
       updated_at         = NOW()
     WHERE id = ${id}
     RETURNING *
@@ -423,6 +426,62 @@ export async function authenticateEndpointKey(
 export async function touchEndpointKey(keyRecordId: string): Promise<void> {
   const sql = getSQL();
   await sql`UPDATE endpoint_keys SET last_used_at = NOW() WHERE id = ${keyRecordId}`;
+}
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+export interface RateVerdict {
+  allowed: boolean;
+  used: number;
+  limit: number;
+  /** Seconds until the current minute rolls over. Feeds Retry-After. */
+  resetIn: number;
+}
+
+/**
+ * Counts a run against its key's per-minute allowance.
+ *
+ * Deliberately a database counter rather than the in-memory limiter used
+ * elsewhere: that one is per serverless instance and keyed on the caller's
+ * claimed IP, so it neither adds up across instances nor resists spoofing.
+ * Here every request spends real money at real vendors, so the count has to be
+ * shared and tied to the key, not the network path.
+ *
+ * The increment is a single atomic upsert — two concurrent requests can't both
+ * read "59" and both proceed.
+ */
+export async function consumeEndpointRate(
+  keyRecordId: string,
+  limitPerMinute: number
+): Promise<RateVerdict> {
+  const now = new Date();
+  const resetIn = 60 - now.getUTCSeconds();
+
+  if (limitPerMinute <= 0) {
+    return { allowed: true, used: 0, limit: 0, resetIn };
+  }
+
+  const sql = getSQL();
+  const rows = await sql`
+    INSERT INTO endpoint_rate_counters (key_record_id, window_start, count)
+    VALUES (${keyRecordId}, date_trunc('minute', NOW()), 1)
+    ON CONFLICT (key_record_id, window_start)
+    DO UPDATE SET count = endpoint_rate_counters.count + 1
+    RETURNING count
+  `;
+  const used = (rows[0]?.count as number) ?? 1;
+
+  // Only when this key opens a fresh minute, so the sweep is rare and never
+  // needs a cron of its own.
+  if (used === 1) {
+    void sql`
+      DELETE FROM endpoint_rate_counters WHERE window_start < NOW() - INTERVAL '10 minutes'
+    `.catch(() => {});
+  }
+
+  return { allowed: used <= limitPerMinute, used, limit: limitPerMinute, resetIn };
 }
 
 // ---------------------------------------------------------------------------

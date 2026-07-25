@@ -224,6 +224,8 @@ export interface Endpoint {
   log_retention_days: number;
   /** Store request/response previews in the run log. Off by default (PII). */
   log_bodies: boolean;
+  /** Per key, counted in the database. Every run buys paid upstream calls. */
+  rate_limit_per_minute: number;
   created_at: string;
   updated_at: string;
 }

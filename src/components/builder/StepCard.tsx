@@ -4,7 +4,9 @@ import { useState } from "react";
 import type { ConfigWithStats } from "@/lib/types";
 import type { StepDef, HttpMethod, BodyType } from "@/lib/endpointTypes";
 import { HTTP_METHODS } from "@/lib/endpointTypes";
+import type { StepTrace } from "@/lib/engine/execute";
 import type { TokenSuggestion } from "@/lib/engine/tokens";
+import { STEP_STATUS_LABELS, STEP_STATUS_TONES, toneClass } from "@/lib/runStatus";
 import { Select } from "../ui/Select";
 import { Toggle } from "../ui/Toggle";
 import { TokenInput } from "./TokenInput";
@@ -19,7 +21,15 @@ import {
   Trash,
   AlertTriangle,
 } from "../ui/Icon";
-import { btnIcon, btnIconDanger, inputCls, labelCls, hintCls, textareaCls } from "@/lib/ui";
+import {
+  badgeBase,
+  btnIcon,
+  btnIconDanger,
+  inputCls,
+  labelCls,
+  hintCls,
+  textareaCls,
+} from "@/lib/ui";
 
 /**
  * One step: which provider to call, when to call it, what counts as an answer,
@@ -40,6 +50,7 @@ export function StepCard({
   onDuplicate,
   onMove,
   issues,
+  result,
 }: {
   step: StepDef;
   index: number;
@@ -55,6 +66,8 @@ export function StepCard({
   onDuplicate: () => void;
   onMove: (direction: -1 | 1) => void;
   issues: string[];
+  /** How this step did in the last test run, if one has been run. */
+  result: StepTrace | null;
 }) {
   const [section, setSection] = useState<"query" | "headers" | "body">("query");
 
@@ -125,6 +138,25 @@ export function StepCard({
             {step.enabled ? conditionSummary : "Disabled"}
           </span>
         </button>
+
+        {/*
+          Fixed-width slot, reserved whether or not a test has been run, so a
+          result appearing can't shift the controls beside it.
+        */}
+        <div className="w-[7.5rem] shrink-0 hidden md:flex justify-end">
+          {result && (
+            <span
+              title={
+                result.skip_reason ??
+                result.error?.detail ??
+                `${result.latency_ms} ms · ${result.http_status ?? "no response"}`
+              }
+              className={`${badgeBase} ${toneClass(STEP_STATUS_TONES[result.status])} w-full justify-center`}
+            >
+              {STEP_STATUS_LABELS[result.status]}
+            </span>
+          )}
+        </div>
 
         <Toggle
           checked={step.enabled}

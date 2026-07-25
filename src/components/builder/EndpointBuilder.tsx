@@ -7,8 +7,10 @@ import type { Endpoint, EndpointDefinition, StepDef } from "@/lib/endpointTypes"
 import { validateEndpointDefinition, type Issue } from "@/lib/engine/validate";
 import { renameStepKey, suggestStepKey, tokensForStep, responseTokens } from "@/lib/engine/tokens";
 import { describeCondition } from "@/lib/engine/describe";
+import type { RunResult } from "@/lib/engine/execute";
 import { StepCard } from "./StepCard";
 import { InputSchemaEditor } from "./InputSchemaEditor";
+import { TestRunPanel } from "./TestRunPanel";
 import { ConfirmModal } from "../ConfirmModal";
 import { Plus, Spinner, AlertTriangle, Check } from "../ui/Icon";
 import { btnPrimary, btnSecondary, cardCls, errorBoxCls, hintCls } from "@/lib/ui";
@@ -41,8 +43,16 @@ export function EndpointBuilder({
   const [saveError, setSaveError] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<StepDef | null>(null);
+  const [lastRun, setLastRun] = useState<RunResult | null>(null);
 
   const steps = definition.steps ?? [];
+
+  /** Last test outcome per step, so each card can show how it did. */
+  const resultsByStep = useMemo(() => {
+    const map = new Map<string, RunResult["steps"][number]>();
+    for (const step of lastRun?.steps ?? []) map.set(step.key, step);
+    return map;
+  }, [lastRun]);
 
   const validation = useMemo(() => validateEndpointDefinition(definition), [definition]);
   const issues: Issue[] = validation.issues ?? [];
@@ -77,6 +87,9 @@ export function EndpointBuilder({
     setDefinition(next);
     setDirty(true);
     setSaveError("");
+    // Any edit makes the last test result stale, and a stale badge on a step
+    // card is worse than no badge — it reads as "this still works".
+    setLastRun(null);
   }, []);
 
   function updateStep(index: number, next: StepDef) {
@@ -290,6 +303,7 @@ export function EndpointBuilder({
               onDuplicate={() => duplicateStep(index)}
               onMove={(direction) => moveStep(index, direction)}
               issues={issuesByStep.get(index) ?? []}
+              result={resultsByStep.get(step.key) ?? null}
             />
           ))}
 
@@ -298,6 +312,15 @@ export function EndpointBuilder({
             Add step
           </button>
         </div>
+      )}
+
+      {steps.length > 0 && (
+        <TestRunPanel
+          endpointId={endpoint.id}
+          definition={definition}
+          blocked={errorCount > 0 ? "Fix the highlighted problems first" : ""}
+          onResult={setLastRun}
+        />
       )}
 
       {issues.filter((i) => i.severity === "warning").length > 0 && (

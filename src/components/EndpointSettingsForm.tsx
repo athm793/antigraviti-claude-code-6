@@ -31,6 +31,7 @@ export function EndpointSettingsForm({ endpoint }: { endpoint: Endpoint }) {
     cache_ttl_seconds: String(endpoint.cache_ttl_seconds),
     log_bodies: endpoint.log_bodies,
     log_retention_days: String(endpoint.log_retention_days),
+    rate_limit_per_minute: String(endpoint.rate_limit_per_minute),
   });
 
   function set<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
@@ -51,6 +52,7 @@ export function EndpointSettingsForm({ endpoint }: { endpoint: Endpoint }) {
           ...form,
           cache_ttl_seconds: Number(form.cache_ttl_seconds) || 0,
           log_retention_days: Number(form.log_retention_days) || 30,
+          rate_limit_per_minute: Number(form.rate_limit_per_minute) || 0,
         }),
       });
 
@@ -141,6 +143,20 @@ export function EndpointSettingsForm({ endpoint }: { endpoint: Endpoint }) {
             />
           </Field>
         )}
+
+        <Field
+          label="Runs allowed per minute, per key"
+          hint="Every run buys upstream API calls, so this is a spend limit as much as a traffic one. 0 turns it off."
+        >
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            value={form.rate_limit_per_minute}
+            onChange={(e) => set("rate_limit_per_minute", e.target.value)}
+            className={`${inputCls} max-w-[12rem]`}
+          />
+        </Field>
       </div>
 
       <div className="border-t border-[#1a1a28] pt-4 flex flex-col gap-4">

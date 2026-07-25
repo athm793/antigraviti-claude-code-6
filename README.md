@@ -88,7 +88,8 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 - [x] Endpoint + version schema, hashed endpoint keys
 - [x] Template and condition engine (no `eval`; JSON rule trees)
 - [x] Visual step builder
-- [ ] Public execution endpoint, run logs and per-provider hit rates
+- [x] Public execution endpoint, plus a test run against the unsaved draft
+- [ ] Run logs and per-provider hit rates
 - [ ] JSON view of a definition, for copy/paste and versioning
 - [ ] Result caching keyed on owner + endpoint + version + input
 - [ ] Opt-in parallel fan-out with declared-order merging
@@ -171,6 +172,52 @@ curl https://your-keyproxy.vercel.app/api/proxy/CONFIG_ID/v1/models \
 
 ---
 
+## Running a waterfall
+
+Build the steps under **Endpoints**, then call the one URL:
+
+```bash
+curl https://your-keyproxy.vercel.app/api/run/find-email \
+  -H "x-endpoint-key: kp_ep_..." \
+  -H "Content-Type: application/json" \
+  -d '{"domain": "acme.com", "first_name": "Ana"}'
+```
+
+You get back the same shape whichever provider answered:
+
+```json
+{
+  "status": "success",
+  "output": { "email": "ana@acme.com", "confidence": 0.94 },
+  "raw": { "...": "the winning provider's response, untouched" },
+  "resolved_by": "hunter",
+  "meta": { "duration_ms": 1840, "upstream_calls": 2, "cost_cents": 17 },
+  "trace": [
+    { "name": "Prospeo", "status": "miss", "http_status": 200, "latency_ms": 612 },
+    { "name": "Hunter",  "status": "success", "http_status": 200, "latency_ms": 1180 }
+  ]
+}
+```
+
+`status` is one of:
+
+| Value | Meaning | HTTP |
+|---|---|---|
+| `success` | A provider answered and every required field is filled | 200 |
+| `partial` | Some fields came back, but not all the required ones | 200 |
+| `miss` | Every provider replied, none of them had it | 200 |
+| `error` | Something broke — unreachable provider, out of time, hard failure | 502 |
+
+**A miss is a 200, not a 404.** Clay, n8n, Make and Zapier all treat a non-2xx as a failure and will retry the row or halt the table, so "no email found" has to be a successful response that says so. Check `status`, not the HTTP code.
+
+The `trace` explains itself: each step reports whether it ran, why it was skipped, what it returned and how long it took — including which condition failed. That is also how the per-provider hit rate gets computed, so you can see which vendor is actually earning its keep.
+
+A step only counts as an answer if it returns 2xx **and** fills every required output field. A provider returning `200 {"email": null}` has not resolved anything, and the waterfall carries on to the next one.
+
+Endpoint keys are shown once and stored as a SHA-256 hash — a database snapshot doesn't hand anyone a working key. Each key gets its own per-minute run limit, counted in the database, because every run buys real upstream calls.
+
+---
+
 ## Agency setup guide
 
 **One provider = one upstream API.** Here's a typical agency setup:
@@ -216,6 +263,13 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 | POST | `/api/configs/[id]/test` | Test connectivity to the target API |
 | ALL | `/api/proxy/[configId]/[...path]` | Main proxy endpoint |
 | ALL | `/api/debug/[configId]/[...path]` | Debug proxy with verbose logging |
+| GET / POST | `/api/endpoints` | List or create waterfall endpoints |
+| GET / PATCH / DELETE | `/api/endpoints/[id]` | Get, update settings, or delete |
+| PUT | `/api/endpoints/[id]/definition` | Save a new version of the waterfall |
+| GET / POST | `/api/endpoints/[id]/keys` | List or issue endpoint keys |
+| DELETE | `/api/endpoints/[id]/keys/[keyId]` | Revoke an endpoint key |
+| POST | `/api/endpoints/[id]/test` | Run an unsaved draft; nothing is persisted |
+| POST | `/api/run/[slug]` | **Run a waterfall.** Authenticated by `x-endpoint-key` |
 | GET | `/api/health` | Health check |
 | POST | `/api/auth/setup` | One-time: create first admin |
 | POST | `/api/auth/login` | Log in |

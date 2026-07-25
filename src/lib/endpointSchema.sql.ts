@@ -114,6 +114,24 @@ export const ENDPOINT_DDL: string[] = [
   `CREATE INDEX IF NOT EXISTS idx_endpoint_cache_expires ON endpoint_cache(expires_at)`,
   `CREATE INDEX IF NOT EXISTS idx_endpoint_cache_endpoint ON endpoint_cache(endpoint_id)`,
 
+  // Spend control, counted per key in the database rather than in memory.
+  // The in-process limiter used by the dashboard is per-instance and keyed on
+  // a spoofable x-forwarded-for; that's fine for a button, and useless for
+  // something where each request buys upstream API calls.
+  `CREATE TABLE IF NOT EXISTS endpoint_rate_counters (
+     key_record_id TEXT        NOT NULL,
+     window_start  TIMESTAMPTZ NOT NULL,
+     count         INTEGER     NOT NULL DEFAULT 0,
+     PRIMARY KEY (key_record_id, window_start)
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_rate_counters_window
+     ON endpoint_rate_counters(window_start)`,
+
+  // Added after the fact, so deployments created before this column exists
+  // pick it up. CREATE TABLE IF NOT EXISTS alone would skip it forever.
+  `ALTER TABLE endpoints
+     ADD COLUMN IF NOT EXISTS rate_limit_per_minute INTEGER NOT NULL DEFAULT 60`,
+
   // Circular reference, so the constraint is added after both tables exist.
   // ADD CONSTRAINT is not idempotent — drop first.
   `ALTER TABLE endpoints DROP CONSTRAINT IF EXISTS fk_endpoints_active_version`,
