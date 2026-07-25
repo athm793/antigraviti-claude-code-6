@@ -58,7 +58,7 @@ export function ParallelGroup({
         <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           {known.length === enabled.length && totalCents > 0
-            ? `About ${(totalCents / 100).toFixed(2)} per run — every one of them is called`
+            ? `About $${(totalCents / 100).toFixed(2)} per run — every one of them is called`
             : `${enabled.length}× the cost of one step — every one of them is called, every time`}
         </span>
       </div>

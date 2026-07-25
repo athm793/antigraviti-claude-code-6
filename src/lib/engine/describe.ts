@@ -72,8 +72,14 @@ export function describeCondition(definition: EndpointDefinition, stepIndex: num
     if (stepIndex === 0) return "Always runs";
     const previous = (definition.steps ?? [])
       .slice(0, stepIndex)
+      // A sibling in the same parallel group starts at the same moment, so it
+      // is not something this step waits on — saying "runs if A didn't
+      // answer" about a step running beside A would be flatly wrong.
+      .filter((s) => !(step.group && s.group === step.group))
       .filter((s) => s.enabled && s.on_success === "stop");
-    if (previous.length === 0) return "Always runs";
+    if (previous.length === 0) {
+      return step.group ? "Runs with the steps beside it" : "Always runs";
+    }
     return previous.length === 1
       ? "Runs if step 1 didn't answer"
       : `Runs if steps 1–${previous.length} didn't answer`;
