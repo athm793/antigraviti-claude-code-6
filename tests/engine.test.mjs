@@ -514,6 +514,136 @@ check("undeclared fields are surfaced rather than silently ignored",
 ok("undeclared fields never reach the templates",
   validateRunInput(fields, { domain: "acme.com", doamin: "typo" }).value.doamin === undefined);
 
+// ------------------------------------------------------------ parallel groups
+//
+// Parallel means you pay everyone. What has to hold is that the result is the
+// same every time regardless of who replied first — a waterfall you can't
+// reproduce is one you can't debug.
+
+function racingDeps(responses) {
+  const started = [], finished = [];
+  const clock = { t: 0 };
+  return {
+    started, finished,
+    deps: {
+      now: () => clock.t,
+      getProvider: (id) => ({ id, name: `Provider ${id}`, auth_header_name: "X-API-KEY" }),
+      call: async (step) => {
+        started.push(step.key);
+        const canned = responses[step.key] ?? { status: 200, body: {} };
+        // Deliberately resolve out of declared order.
+        await new Promise((r) => setTimeout(r, canned.delay ?? 0));
+        finished.push(step.key);
+        return {
+          ok: true, status: canned.status, headers: {}, body: canned.body,
+          bodyText: JSON.stringify(canned.body), url: "https://api.example.com/x",
+          attempts: 1, keysExhausted: 0, latencyMs: canned.delay ?? 0, error: null,
+        };
+      },
+    },
+  };
+}
+
+async function runGroup(steps, responses, settings) {
+  const fake = racingDeps(responses);
+  const result = await runEndpoint({
+    runId: "run-parallel",
+    definition: def(steps, { settings: { required_outputs: ["email"], max_parallel: 5, ...settings } }),
+    input: {},
+    deps: fake.deps,
+    deadlineAt: 60_000,
+  });
+  return { result, started: fake.started, finished: fake.finished };
+}
+
+const groupSteps = (over = {}) => [
+  emailStep({ key: "slow", name: "Slow", group: "g1" }),
+  emailStep({ key: "fast", name: "Fast", group: "g1", ...over }),
+];
+
+const raced = await runGroup(
+  groupSteps(),
+  {
+    slow: { status: 200, body: { email: "slow@acme.com" }, delay: 30 },
+    fast: { status: 200, body: { email: "fast@acme.com" }, delay: 0 },
+  },
+  { group_merge: { g1: "first_success" } }
+);
+check("both members of a group are started", raced.started, ["slow", "fast"]);
+check("and they really do overlap — the later one finishes first",
+  raced.finished, ["fast", "slow"]);
+check("but the winner is the first in DECLARED order, not the first to reply",
+  raced.result.resolved_by, "slow");
+check("so the output is reproducible", raced.result.output.email, "slow@acme.com");
+
+const filled = await runGroup(
+  [
+    baseStep({
+      key: "a", name: "A", group: "g1",
+      output_map: [{ field: "email", from: "{{response.body.email}}", transform: "none" }],
+    }),
+    baseStep({
+      key: "b", name: "B", group: "g1",
+      output_map: [{ field: "phone", from: "{{response.body.phone}}", transform: "none" }],
+    }),
+  ],
+  {
+    a: { status: 200, body: { email: "a@acme.com" }, delay: 20 },
+    b: { status: 200, body: { phone: "+1" }, delay: 0 },
+  },
+  { group_merge: { g1: "fill_empty" } }
+);
+check("fill-empty keeps what every member found",
+  filled.result.output, { email: "a@acme.com", phone: "+1" });
+
+const collected = await runGroup(
+  [
+    emailStep({ key: "a", name: "A", group: "g1", on_success: "continue" }),
+    emailStep({ key: "b", name: "B", group: "g1", on_success: "continue" }),
+  ],
+  {
+    a: { status: 200, body: { email: "a@acme.com" }, delay: 20 },
+    b: { status: 200, body: { email: "b@acme.com" }, delay: 0 },
+  },
+  { group_merge: { g1: "collect" } }
+);
+check("collect gathers every answer, in declared order",
+  collected.result.output.email, ["a@acme.com", "b@acme.com"]);
+
+const capped = await runGroup(
+  [
+    emailStep({ key: "a", name: "A", group: "g1" }),
+    emailStep({ key: "b", name: "B", group: "g1" }),
+    emailStep({ key: "c", name: "C", group: "g1" }),
+  ],
+  {
+    a: { status: 200, body: { email: null }, delay: 5 },
+    b: { status: 200, body: { email: null }, delay: 5 },
+    c: { status: 200, body: { email: "c@acme.com" }, delay: 0 },
+  },
+  { group_merge: { g1: "first_success" }, max_parallel: 1 }
+);
+check("a max_parallel of 1 still runs every member", capped.started.length, 3);
+check("and still resolves", capped.result.resolved_by, "c");
+
+const groupThenStep = await runGroup(
+  [
+    emailStep({ key: "a", name: "A", group: "g1" }),
+    emailStep({ key: "b", name: "B", group: "g1" }),
+    emailStep({ key: "c", name: "C" }),
+  ],
+  {
+    a: { status: 200, body: { email: "a@acme.com" } },
+    b: { status: 200, body: { email: "b@acme.com" } },
+    c: { status: 200, body: { email: "c@acme.com" } },
+  },
+  { group_merge: { g1: "first_success" } }
+);
+check("a hit inside a group stops the steps after it",
+  groupThenStep.started, ["a", "b"]);
+check("the step after the group is reported as stopped, not skipped by condition",
+  groupThenStep.result.steps[2].skip_reason, "Stopped after step 2");
+
 // -------------------------------------------------------------- cache keys
 //
 // A cache is only worth having if two calls meaning the same thing produce the

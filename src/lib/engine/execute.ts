@@ -1,5 +1,5 @@
 import { buildStepRequest, type BuiltRequest } from "./request";
-import { applyOutputMap, mergeOutput } from "./mapping";
+import { applyOutputMap, collectOutput, mergeOutput } from "./mapping";
 import { defaultSuccessRule, evaluateRule, type RuleContext } from "./rules";
 import { emptyRecord } from "./paths";
 import type { TemplateContext } from "./template";
@@ -168,13 +168,50 @@ function blankTrace(step: StepDef, index: number, provider: ProviderInfo | null)
   };
 }
 
+/** A run of consecutive steps that share a group, or one ungrouped step. */
+interface Stage {
+  group: string | null;
+  members: { step: StepDef; index: number }[];
+}
+
+function toStages(steps: StepDef[]): Stage[] {
+  const stages: Stage[] = [];
+  steps.forEach((step, index) => {
+    const group = step.group ?? null;
+    const previous = stages[stages.length - 1];
+    if (group && previous && previous.group === group) {
+      previous.members.push({ step, index });
+      return;
+    }
+    stages.push({ group, members: [{ step, index }] });
+  });
+  return stages;
+}
+
+/** What one member of a stage did, before the stage decides what it means. */
+interface StepOutcome {
+  trace: StepTrace;
+  succeeded: boolean;
+  /** True when nothing was called: disabled, condition unmet, no provider. */
+  skipped: boolean;
+  output: Record<string, unknown>;
+  body: unknown;
+  contextEntry: TemplateContext["steps"][string] | null;
+  /** Set when the step failed; the message a "fail" outcome would surface. */
+  failureDetail: string | null;
+  upstreamCalls: number;
+  costCents: number;
+}
+
 /**
  * Runs an endpoint definition to completion.
  *
- * Steps sharing a `group` still execute one after another here — opt-in
- * parallel fan-out is a later phase. That is a performance difference, not a
- * behavioural one: validation already forbids a step from referencing a
- * same-group sibling, so nothing can observe the ordering.
+ * Consecutive steps sharing a `group` run concurrently, capped by
+ * `settings.max_parallel`. Results are always merged in the order the steps are
+ * declared, never the order they finished — otherwise the same inputs against
+ * the same providers could produce different output depending on whose network
+ * was quicker that second, and a waterfall you can't reproduce is one you
+ * can't debug.
  */
 export async function runEndpoint(options: RunOptions): Promise<RunResult> {
   const { definition, deps, runId } = options;
@@ -197,7 +234,6 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
   let costCents = 0;
   let fatal: string | null = null;
   let deadlineExceeded = false;
-  let stoppedAt = -1;
 
   const baseContext = (): TemplateContext => ({
     input: options.input,
@@ -206,23 +242,41 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     run: { id: runId, started_at: new Date(started).toISOString() },
   });
 
-  for (let index = 0; index < steps.length; index++) {
-    const step = steps[index];
+  /**
+   * Runs one step and reports what happened, without deciding what it means.
+   *
+   * The distinction matters for a parallel group: whether the run stops is a
+   * property of the group and its merge mode, not of whichever member happened
+   * to finish first.
+   *
+   * `context` is captured by the caller before the stage starts, so every
+   * member of a group sees the same `result` — a member must never observe a
+   * sibling's output, which is also why validation forbids referencing one.
+   */
+  async function executeStep(
+    step: StepDef,
+    index: number,
+    context: TemplateContext
+  ): Promise<StepOutcome> {
     const provider = deps.getProvider(step.config_id);
     const trace = blankTrace(step, index, provider);
 
-    if (stoppedAt >= 0) {
-      trace.skip_reason = deadlineExceeded
-        ? "Ran out of time"
-        : `Stopped after step ${stoppedAt + 1}`;
-      traces.push(trace);
-      continue;
-    }
+    const blank = (over: Partial<StepOutcome> = {}): StepOutcome => ({
+      trace,
+      succeeded: false,
+      skipped: true,
+      output: {},
+      body: null,
+      contextEntry: null,
+      failureDetail: null,
+      upstreamCalls: 0,
+      costCents: 0,
+      ...over,
+    });
 
     if (step.enabled === false) {
       trace.skip_reason = "Turned off";
-      traces.push(trace);
-      continue;
+      return blank();
     }
 
     if (!provider) {
@@ -230,23 +284,9 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
       // deleted provider surfaces here rather than as a crash.
       trace.status = "config_missing";
       trace.skip_reason = "This step's provider no longer exists";
-      traces.push(trace);
-      if (step.on_failure === "fail") {
-        fatal = `Step "${step.name}" refers to a provider that no longer exists`;
-        stoppedAt = index;
-      } else if (step.on_failure === "stop") {
-        stoppedAt = index;
-      }
-      continue;
-    }
-
-    const remaining = options.deadlineAt - deps.now();
-    if (remaining < MIN_STEP_BUDGET_MS) {
-      deadlineExceeded = true;
-      stoppedAt = index;
-      trace.skip_reason = "Ran out of time";
-      traces.push(trace);
-      continue;
+      return blank({
+        failureDetail: `Step "${step.name}" refers to a provider that no longer exists`,
+      });
     }
 
     // --- Should this step run at all? ---------------------------------
@@ -255,7 +295,7 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     // (empty) map and `result` is what the run has gathered so far. That is
     // what makes "only ask this vendor if we still have no email" expressible.
     const runCtx: RuleContext = {
-      ...baseContext(),
+      ...context,
       status: null,
       headers: {},
       body: null,
@@ -269,8 +309,7 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
       trace.run_condition = conditionTrace;
       if (!conditionTrace.result) {
         trace.skip_reason = "Its condition wasn't met";
-        traces.push(trace);
-        continue;
+        return blank();
       }
     }
 
@@ -279,14 +318,7 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     if (!built.ok) {
       trace.status = "error";
       trace.error = { kind: built.error.kind, detail: built.error.detail };
-      traces.push(trace);
-      if (step.on_failure === "fail") {
-        fatal = built.error.detail;
-        stoppedAt = index;
-      } else if (step.on_failure === "stop") {
-        stoppedAt = index;
-      }
-      continue;
+      return blank({ skipped: false, failureDetail: built.error.detail });
     }
 
     trace.unresolved = [...new Set(built.request.unresolved)];
@@ -303,7 +335,6 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
       maxAttempts: step.max_key_attempts ?? 3,
     });
 
-    upstreamCalls += call.attempts;
     trace.attempts = call.attempts;
     trace.keys_exhausted = call.keysExhausted;
     trace.latency_ms = call.latencyMs;
@@ -319,25 +350,21 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     if (!call.ok) {
       trace.status = "error";
       trace.error = call.error ?? { kind: "unknown" };
-      // Only bill for a call that actually reached the provider.
-      traces.push(trace);
-      stepContext[step.key] = {
-        status: call.status,
-        headers: call.headers,
-        body: call.body,
-        output: {},
-        ok: false,
-      };
-      if (step.on_failure === "fail") {
-        fatal = call.error?.detail ?? "Upstream call failed";
-        stoppedAt = index;
-      } else if (step.on_failure === "stop") {
-        stoppedAt = index;
-      }
-      continue;
+      return blank({
+        skipped: false,
+        upstreamCalls: call.attempts,
+        // Not billed: the call never reached the provider.
+        contextEntry: {
+          status: call.status,
+          headers: call.headers,
+          body: call.body,
+          output: {},
+          ok: false,
+        },
+        failureDetail: call.error?.detail ?? "Upstream call failed",
+      });
     }
 
-    if (step.cost_per_call_cents) costCents += step.cost_per_call_cents;
     trace.cost_cents = step.cost_per_call_cents ?? 0;
     if (options.includeBodies) trace.response_preview = preview(call.bodyText);
 
@@ -346,7 +373,7 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     // Runs before the success condition, so a rule can say "this step counts
     // as a hit only if it produced an email".
     const responseCtx: TemplateContext = {
-      ...baseContext(),
+      ...context,
       response: { status: call.status, headers: call.headers, body: call.body },
     };
     const mapped = applyOutputMap(step.output_map ?? [], responseCtx);
@@ -369,32 +396,144 @@ export async function runEndpoint(options: RunOptions): Promise<RunResult> {
     trace.success_condition = successTrace;
     trace.status = successTrace.result ? "success" : "miss";
 
-    stepContext[step.key] = {
-      status: call.status,
-      headers: call.headers,
-      body: call.body,
+    return {
+      trace,
+      succeeded: successTrace.result,
+      skipped: false,
       output: mapped.output,
-      ok: successTrace.result,
+      body: call.body,
+      contextEntry: {
+        status: call.status,
+        headers: call.headers,
+        body: call.body,
+        output: mapped.output,
+        ok: successTrace.result,
+      },
+      failureDetail: successTrace.result
+        ? null
+        : `Step "${step.name}" didn't return what was required`,
+      upstreamCalls: call.attempts,
+      costCents: step.cost_per_call_cents ?? 0,
     };
+  }
 
-    // A miss can still have filled a field the next provider won't return —
-    // partial data is worth keeping, and mergeOutput never overwrites.
-    result = mergeOutput(result, mapped.output);
-    traces.push(trace);
+  /** Runs a group's members concurrently, never more than `limit` at a time. */
+  async function runConcurrently(
+    members: { step: StepDef; index: number }[],
+    context: TemplateContext,
+    limit: number
+  ): Promise<StepOutcome[]> {
+    const outcomes: StepOutcome[] = new Array(members.length);
+    let next = 0;
 
-    if (successTrace.result) {
+    async function worker() {
+      for (;;) {
+        const slot = next++;
+        if (slot >= members.length) return;
+        const { step, index } = members[slot];
+        // Results are written to their declared slot, so completion order can
+        // never leak into the output.
+        outcomes[slot] = await executeStep(step, index, context);
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.max(1, Math.min(limit, members.length)) }, worker)
+    );
+    return outcomes;
+  }
+
+  const stages = toStages(steps);
+  let stopped = false;
+  let stoppedAfter = 0;
+
+  for (const stage of stages) {
+    if (stopped) {
+      for (const { step, index } of stage.members) {
+        const trace = blankTrace(step, index, deps.getProvider(step.config_id));
+        trace.skip_reason = deadlineExceeded
+          ? "Ran out of time"
+          : `Stopped after step ${stoppedAfter}`;
+        traces.push(trace);
+      }
+      continue;
+    }
+
+    // One deadline check per stage: a group's members all start together, so
+    // starting half of them and abandoning the rest would spend money for a
+    // result nobody can use.
+    if (options.deadlineAt - deps.now() < MIN_STEP_BUDGET_MS) {
+      deadlineExceeded = true;
+      stopped = true;
+      for (const { step, index } of stage.members) {
+        const trace = blankTrace(step, index, deps.getProvider(step.config_id));
+        trace.skip_reason = "Ran out of time";
+        traces.push(trace);
+      }
+      continue;
+    }
+
+    const context = baseContext();
+    const outcomes =
+      stage.members.length === 1
+        ? [await executeStep(stage.members[0].step, stage.members[0].index, context)]
+        : await runConcurrently(stage.members, context, settings.max_parallel);
+
+    // Everything below walks the members in DECLARED order.
+    for (const outcome of outcomes) {
+      traces.push(outcome.trace);
+      upstreamCalls += outcome.upstreamCalls;
+      costCents += outcome.costCents;
+    }
+    for (let i = 0; i < outcomes.length; i++) {
+      const entry = outcomes[i].contextEntry;
+      if (entry) stepContext[stage.members[i].step.key] = entry;
+    }
+
+    const winnerAt = outcomes.findIndex((o) => o.succeeded);
+    const mode = stage.group
+      ? (settings.group_merge?.[stage.group] ?? "first_success")
+      : "first_success";
+
+    if (stage.members.length === 1 || mode === "fill_empty") {
+      // Every member contributes what it found. A miss can still have filled a
+      // field the next provider won't return, and mergeOutput never overwrites.
+      for (const outcome of outcomes) result = mergeOutput(result, outcome.output);
+    } else if (mode === "collect") {
+      for (const outcome of outcomes) result = collectOutput(result, outcome.output);
+    } else if (winnerAt >= 0) {
+      // First hit in listed order — explicitly not "whoever replied first".
+      result = mergeOutput(result, outcomes[winnerAt].output);
+    }
+
+    if (winnerAt >= 0) {
       if (!resolvedBy) {
-        resolvedBy = step.key;
-        raw = call.body;
+        resolvedBy = stage.members[winnerAt].step.key;
+        raw = outcomes[winnerAt].body;
       }
-      if (step.on_success === "stop") {
-        stoppedAt = index;
+      if (stage.members[winnerAt].step.on_success === "stop") {
+        stopped = true;
+        stoppedAfter = stage.members[stage.members.length - 1].index + 1;
       }
-    } else if (step.on_failure === "fail") {
-      fatal = `Step "${step.name}" didn't return what was required`;
-      stoppedAt = index;
-    } else if (step.on_failure === "stop") {
-      stoppedAt = index;
+      continue;
+    }
+
+    // Nothing in this stage answered. The strictest member wins the decision,
+    // in declared order: fail beats stop beats continue.
+    const failing = outcomes
+      .map((outcome, i) => ({ outcome, step: stage.members[i].step }))
+      .filter(({ outcome }) => !outcome.skipped || outcome.failureDetail);
+
+    const hard = failing.find(({ step }) => step.on_failure === "fail");
+    if (hard) {
+      fatal = hard.outcome.failureDetail ?? `Step "${hard.step.name}" failed`;
+      stopped = true;
+      stoppedAfter = stage.members[stage.members.length - 1].index + 1;
+      continue;
+    }
+    if (failing.some(({ step }) => step.on_failure === "stop")) {
+      stopped = true;
+      stoppedAfter = stage.members[stage.members.length - 1].index + 1;
     }
   }
 

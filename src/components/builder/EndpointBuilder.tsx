@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ConfigWithStats } from "@/lib/types";
-import type { Endpoint, EndpointDefinition, StepDef } from "@/lib/endpointTypes";
+import {
+  DEFAULT_SETTINGS,
+  type Endpoint,
+  type EndpointDefinition,
+  type MergeMode,
+  type StepDef,
+} from "@/lib/endpointTypes";
 import { validateEndpointDefinition, type Issue } from "@/lib/engine/validate";
 import { renameStepKey, suggestStepKey, tokensForStep, responseTokens } from "@/lib/engine/tokens";
 import { describeCondition } from "@/lib/engine/describe";
@@ -11,6 +17,8 @@ import type { RunResult } from "@/lib/engine/execute";
 import { StepCard } from "./StepCard";
 import { InputSchemaEditor } from "./InputSchemaEditor";
 import { TestRunPanel } from "./TestRunPanel";
+import { JsonView } from "./JsonView";
+import { ParallelGroup } from "./ParallelGroup";
 import { ConfirmModal } from "../ConfirmModal";
 import { Plus, Spinner, AlertTriangle, Check } from "../ui/Icon";
 import { btnPrimary, btnSecondary, cardCls, errorBoxCls, hintCls } from "@/lib/ui";
@@ -44,6 +52,7 @@ export function EndpointBuilder({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<StepDef | null>(null);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
+  const [mode, setMode] = useState<"visual" | "json">("visual");
 
   const steps = definition.steps ?? [];
 
@@ -194,6 +203,86 @@ export function EndpointBuilder({
     }
   }
 
+  const settings = useMemo(
+    () => ({ ...DEFAULT_SETTINGS, ...(definition.settings ?? {}) }),
+    [definition.settings]
+  );
+
+  /**
+   * Steps grouped into stages, mirroring how the engine runs them.
+   *
+   * Stage numbers, not step numbers: a group of three is one stage, and
+   * numbering its members 2, 3, 4 would say they happen in that order.
+   */
+  const stages = useMemo(() => {
+    const out: {
+      key: string;
+      group: string | null;
+      stageNumber: number;
+      members: { step: StepDef; index: number }[];
+    }[] = [];
+
+    steps.forEach((step, index) => {
+      const group = step.group ?? null;
+      const previous = out[out.length - 1];
+      if (group && previous && previous.group === group) {
+        previous.members.push({ step, index });
+        return;
+      }
+      out.push({
+        key: `${group ?? step.key}-${index}`,
+        group,
+        stageNumber: out.length + 1,
+        members: [{ step, index }],
+      });
+    });
+
+    return out;
+  }, [steps]);
+
+  /**
+   * Joins a step to the one above it, or splits it off.
+   *
+   * A group is stored as a shared id on consecutive steps rather than as a
+   * container, so this has to keep both ends consistent — including tidying up
+   * a group that just lost its second member, since a "group" of one is a
+   * container with nothing to run alongside.
+   */
+  function setParallel(index: number, parallel: boolean) {
+    if (index === 0) return;
+    const next = [...steps];
+    const previous = next[index - 1];
+
+    if (parallel) {
+      const groupId = previous.group ?? `g${Date.now().toString(36)}`;
+      next[index - 1] = { ...previous, group: groupId };
+      next[index] = { ...next[index], group: groupId };
+      update({ ...definition, steps: next });
+      return;
+    }
+
+    const leaving = next[index].group;
+    next[index] = { ...next[index], group: null };
+    if (leaving) {
+      const remaining = next.filter((s) => s.group === leaving);
+      if (remaining.length === 1) {
+        const alone = next.findIndex((s) => s.group === leaving);
+        next[alone] = { ...next[alone], group: null };
+      }
+    }
+    update({ ...definition, steps: next });
+  }
+
+  function setGroupMode(groupId: string, mode: MergeMode) {
+    update({
+      ...definition,
+      settings: {
+        ...settings,
+        group_merge: { ...(settings.group_merge ?? {}), [groupId]: mode },
+      },
+    });
+  }
+
   /** Every output field any step produces — the endpoint's result shape. */
   const allOutputFields = useMemo(() => {
     const fields = new Set<string>();
@@ -243,10 +332,32 @@ export function EndpointBuilder({
 
         <div className="flex-1" />
 
-        <button type="button" onClick={addStep} className={`${btnSecondary} gap-1.5`}>
-          <Plus className="w-4 h-4" />
-          Add step
-        </button>
+        <div
+          role="group"
+          aria-label="Editor mode"
+          className="flex gap-1 bg-[#0a0a10] border border-[#2a2a38] rounded-lg p-1"
+        >
+          {(["visual", "json"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setMode(value)}
+              aria-pressed={mode === value}
+              className={`min-h-[36px] px-3 rounded text-xs transition-colors ${
+                mode === value ? "bg-[#15151f] text-white" : "text-[#8b8b9e] hover:text-white"
+              }`}
+            >
+              {value === "json" ? "JSON" : "Visual"}
+            </button>
+          ))}
+        </div>
+
+        {mode === "visual" && (
+          <button type="button" onClick={addStep} className={`${btnSecondary} gap-1.5`}>
+            <Plus className="w-4 h-4" />
+            Add step
+          </button>
+        )}
         <button
           type="button"
           onClick={save}
@@ -261,6 +372,23 @@ export function EndpointBuilder({
 
       {saveError && <p className={errorBoxCls}>{saveError}</p>}
 
+      {/*
+        Both views stay mounted and one is hidden, rather than swapping them.
+        Unmounting would collapse every expanded step and throw away the last
+        test result on the visual side, and silently discard unapplied text on
+        the JSON side — which is the one place in this editor where losing
+        work would be invisible.
+      */}
+      <div className={mode === "json" ? "contents" : "hidden"}>
+        <JsonView
+          definition={definition}
+          providers={providers}
+          slug={endpoint.slug}
+          onApply={update}
+        />
+      </div>
+
+      <div className={mode === "json" ? "hidden" : "flex flex-col gap-4"}>
       <InputSchemaEditor
         inputs={definition.inputs ?? []}
         onChange={(inputs) => update({ ...definition, inputs })}
@@ -279,33 +407,59 @@ export function EndpointBuilder({
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {steps.map((step, index) => (
-            <StepCard
-              key={`${step.key}-${index}`}
-              step={step}
-              index={index}
-              total={steps.length}
-              providers={providers}
-              tokens={[...tokensForStep(definition, index), ...responseTokens()]}
-              siblingFields={allOutputFields}
-              conditionSummary={describeCondition(definition, index)}
-              expanded={expanded.has(step.key)}
-              onToggleExpanded={() =>
-                setExpanded((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(step.key)) next.delete(step.key);
-                  else next.add(step.key);
-                  return next;
-                })
-              }
-              onChange={(next) => updateStep(index, next)}
-              onDelete={() => setConfirmDelete(step)}
-              onDuplicate={() => duplicateStep(index)}
-              onMove={(direction) => moveStep(index, direction)}
-              issues={issuesByStep.get(index) ?? []}
-              result={resultsByStep.get(step.key) ?? null}
-            />
-          ))}
+          {stages.map((stage) => {
+            const cards = stage.members.map(({ step, index }, position) => (
+              <StepCard
+                key={`${step.key}-${index}`}
+                step={step}
+                index={index}
+                total={steps.length}
+                providers={providers}
+                tokens={[...tokensForStep(definition, index), ...responseTokens()]}
+                siblingFields={allOutputFields}
+                conditionSummary={describeCondition(definition, index)}
+                // Letters inside a group, numbers outside. A numbered list
+                // reads as "3 runs after 2", which inside a group is false.
+                badge={
+                  stage.group
+                    ? String.fromCharCode(65 + position)
+                    : String(stage.stageNumber)
+                }
+                parallelWithPrevious={position > 0}
+                onParallelChange={
+                  index === 0 ? undefined : (on) => setParallel(index, on)
+                }
+                expanded={expanded.has(step.key)}
+                onToggleExpanded={() =>
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(step.key)) next.delete(step.key);
+                    else next.add(step.key);
+                    return next;
+                  })
+                }
+                onChange={(next) => updateStep(index, next)}
+                onDelete={() => setConfirmDelete(step)}
+                onDuplicate={() => duplicateStep(index)}
+                onMove={(direction) => moveStep(index, direction)}
+                issues={issuesByStep.get(index) ?? []}
+                result={resultsByStep.get(step.key) ?? null}
+              />
+            ));
+
+            if (!stage.group) return <div key={stage.key}>{cards}</div>;
+
+            return (
+              <ParallelGroup
+                key={stage.key}
+                members={stage.members.map((m) => m.step)}
+                mode={settings.group_merge?.[stage.group] ?? "first_success"}
+                onModeChange={(next) => setGroupMode(stage.group!, next)}
+              >
+                {cards}
+              </ParallelGroup>
+            );
+          })}
 
           <button type="button" onClick={addStep} className={`${btnSecondary} gap-1.5 self-start`}>
             <Plus className="w-4 h-4" />
@@ -322,6 +476,7 @@ export function EndpointBuilder({
           onResult={setLastRun}
         />
       )}
+      </div>
 
       {issues.filter((i) => i.severity === "warning").length > 0 && (
         <div className="bg-amber-500/[0.06] border border-amber-500/25 rounded-lg p-4 flex flex-col gap-1">

@@ -51,6 +51,9 @@ export function StepCard({
   onMove,
   issues,
   result,
+  badge,
+  parallelWithPrevious,
+  onParallelChange,
 }: {
   step: StepDef;
   index: number;
@@ -68,6 +71,11 @@ export function StepCard({
   issues: string[];
   /** How this step did in the last test run, if one has been run. */
   result: StepTrace | null;
+  /** "1", "2" … in sequence; "A", "B" … inside a parallel group. */
+  badge: string;
+  parallelWithPrevious: boolean;
+  /** Absent on the first step — there is nothing above it to run alongside. */
+  onParallelChange?: (parallel: boolean) => void;
 }) {
   const [section, setSection] = useState<"query" | "headers" | "body">("query");
 
@@ -117,7 +125,7 @@ export function StepCard({
         <GripVertical className="w-4 h-4 text-[#2a2a38] shrink-0 hidden sm:block" />
 
         <span className="w-6 h-6 rounded-full bg-[#00C4B4]/15 text-[#00C4B4] text-xs font-bold flex items-center justify-center shrink-0">
-          {index + 1}
+          {badge}
         </span>
 
         <button
@@ -211,6 +219,30 @@ export function StepCard({
               title="When should this step run?"
               hint="Leave empty to always run it."
             >
+              {onParallelChange && (
+                <div className="flex items-start justify-between gap-4 bg-[#0a0a10] border border-[#2a2a38] rounded-lg px-4 py-3">
+                  <div className="min-w-0">
+                    <div className={labelCls}>Run at the same time as the step above</div>
+                    <p className={hintCls}>
+                      Faster, but you pay for both every time instead of only paying for the
+                      second when the first comes back empty.
+                    </p>
+                  </div>
+                  <Toggle
+                    checked={parallelWithPrevious}
+                    onChange={onParallelChange}
+                    label={`${step.name} runs in parallel with the step above`}
+                  />
+                </div>
+              )}
+
+              {parallelWithPrevious && (
+                <p className={hintCls}>
+                  Checked just before the group starts, so it can look at earlier steps and at
+                  what the run has found so far — but not at the steps running alongside this
+                  one, which haven&apos;t answered yet.
+                </p>
+              )}
               <ConditionEditor
                 rule={step.run_condition}
                 onChange={(rule) => set({ run_condition: rule })}
