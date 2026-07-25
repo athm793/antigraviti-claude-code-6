@@ -8,7 +8,14 @@ import { CopyButton } from "./ui/CopyButton";
 import { Trash, Spinner, ArrowRight } from "./ui/Icon";
 import { btnIconDanger, btnGhostBrand, cardHoverCls } from "@/lib/ui";
 
-export function ConfigCard({ config }: { config: ConfigWithStats }) {
+export function ConfigCard({
+  config,
+  usedByEndpoints = 0,
+}: {
+  config: ConfigWithStats;
+  /** Live waterfall endpoints whose steps call this provider. */
+  usedByEndpoints?: number;
+}) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -42,6 +49,19 @@ export function ConfigCard({ config }: { config: ConfigWithStats }) {
           <h2 className="text-white font-semibold text-base truncate">{config.name}</h2>
           <p className="text-[#8b8b9e] text-xs mt-0.5 font-mono truncate">
             {config.target_base_url}
+          </p>
+          {/* Reserved line either way, so cards in a row stay the same height. */}
+          <p
+            className="text-xs mt-0.5 min-h-[16px] text-[#8b8b9e]"
+            title={
+              usedByEndpoints > 0
+                ? "Waterfall endpoints with a step that calls this provider. Deleting it is blocked while any remain."
+                : undefined
+            }
+          >
+            {usedByEndpoints > 0
+              ? `Used by ${usedByEndpoints} endpoint${usedByEndpoints === 1 ? "" : "s"}`
+              : ""}
           </p>
         </div>
         <button

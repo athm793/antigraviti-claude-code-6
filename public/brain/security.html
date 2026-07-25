@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Security</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Security</h1>
+
+<h2>Ownership (the structural control)</h2>
+<ul>
+  <li>Every provider and endpoint has an <code>owner_user_id</code>. Admins see all; everyone else sees their own. Ownerless rows are admin-only, never open.</li>
+  <li><code>authorizeConfig</code> / <code>authorizeEndpoint</code> run first in every dashboard route. A row you can't access returns <strong>404, not 403</strong>, so ids can't be probed.</li>
+  <li><code>checkStepProviders</code> guards the seam JSONB leaves open: a definition names providers by id with no FK, so both the save route and the test route verify every <code>config_id</code> belongs to the caller. Without it, anyone could write a step carrying someone else's provider id and spend their keys. The refusal says "isn't available", the same wording for deleted and never-yours, so it can't be used to test id existence.</li>
+</ul>
+
+<h2>Two fixed pre-existing criticals (2026-07-25)</h2>
+<ul>
+  <li><code>GET /api/configs/[id]/keys</code> returned every upstream key in plaintext to any logged-in user → key previews (<code>••••1234</code>) only; raw values are server-side only.</li>
+  <li>Any user could repoint any config's <code>target_base_url</code> and harvest its keys → ownership on every route + egress checks + a distinct <code>target_host_changed</code> audit event.</li>
+</ul>
+
+<h2>Egress (SSRF)</h2>
+<ul>
+  <li><code>checkPublicHttpTarget</code> on save: rejects loopback, link-local (incl. 169.254.169.254), RFC1918, CGNAT, <code>.internal</code>, credentials-in-URL, own host.</li>
+  <li><code>assertResolvesPublic</code> re-resolves DNS at request time for waterfall steps — the save-time check alone loses to DNS rebinding.</li>
+  <li><code>isWithinBase</code> containment: a resolved path can never restructure the URL off the provider's origin/base path. Redirects are refused, not followed.</li>
+</ul>
+
+<h2>Keys</h2>
+<table>
+  <tr><th>Endpoint keys</th><td><code>kp_ep_&lt;hex keyId&gt;_&lt;32B base64url&gt;</code> — public id + SHA-256 hash, shown once, constant-time verify, revocable. SHA-256 not scrypt on purpose: 256 bits of entropy, hot path. keyId is hex because base64url contains <code>_</code>, the field separator.</td></tr>
+  <tr><th>Key scoping</th><td>A key identifies its endpoint; the URL segment must agree (slug or id) — a key for endpoint A can't run endpoint B.</td></tr>
+  <tr><th>Master keys</th><td>Legacy plaintext pattern on providers, kept for proxy compatibility; masked in UI.</td></tr>
+</table>
+
+<h2>Injection defences (all tested)</h2>
+<ul>
+  <li>JSON bodies object-walked, never string-spliced — a test feeds a value crafted to add an <code>isAdmin</code> key and asserts it can't.</li>
+  <li>Path traversal: segments encoded individually, <code>..</code> rejected; query via URLSearchParams; CR/LF in header values rejected.</li>
+  <li>Prototype pollution: <code>__proto__/constructor/prototype</code> blocked read+write, null-prototype contexts, scrubber rebuilds objects null-prototyped.</li>
+  <li>Template roots closed — no <code>env</code>, no <code>process</code>.</li>
+</ul>
+
+<h2>Fail-closed gates</h2>
+<ul>
+  <li><code>/api/cron/prune</code>: no <code>CRON_SECRET</code> → 404 for everyone.</li>
+  <li><code>/api/debug</code>: off unless <code>ENABLE_DEBUG_ROUTE=true</code>.</li>
+  <li>Middleware public prefixes keep their trailing slash — matching is <code>startsWith</code>, so <code>/api/run</code> without one would also expose <code>/api/runners</code>.</li>
+</ul>
+
+<h2>Data-handling stances</h2>
+<ul>
+  <li>Run logs by allowlist; results stored only on opt-in; retention default 30 days, enforced nightly.</li>
+  <li>Secret scrubbing on everything leaving the process (<code>redact.ts</code>) — a net for accidents (echoed headers, keys in error messages), not a guarantee against a hostile upstream that base64s a key. Ownership is the real control.</li>
+  <li>Rate limiting for spend is DB-backed per key; the in-memory IP limiter is only used for session-authenticated dashboard buttons.</li>
+</ul>
+</main>
+</body>
+</html>

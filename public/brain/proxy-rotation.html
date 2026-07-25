@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Proxy &amp; rotation</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Proxy &amp; rotation</h1>
+
+<h2>How rotation works</h2>
+<p><code>src/lib/rotation.ts</code> — <code>executeWithRotation(config, req)</code>, shared by the pass-through proxy and the waterfall executor. It returns the upstream <code>Response</code> <strong>unconsumed</strong> plus keyId / attempts / keysExhausted / latency, so the proxy can stream it and the executor can parse it.</p>
+<ul>
+  <li>Selection is <strong>lowest order_index that is active</strong> — a pool drains in order; it is <em>not</em> round-robin. Under heavy concurrency several requests can land on the same key at once.</li>
+  <li>A response whose status is in the config's <code>rate_limit_codes</code> (restricted to 400–599 on save) benches the key: <code>exhausted</code>, or <code>cooldown</code> when <code>cooldown_minutes &gt; 0</code>. <code>markKeyExhausted</code> returns whether it won the race.</li>
+  <li><code>excludeKeyIds</code> keeps a retry from re-picking the key it just burned — shared across a whole waterfall run per provider.</li>
+  <li>Per-attempt <code>AbortController</code> timeout (<code>PROXY_ATTEMPT_TIMEOUT_MS</code>, default 30s), plus a <code>deadlineAt</code> hard stop; no attempt starts with &lt;750ms left.</li>
+  <li><code>redirect: "manual"</code>, and callers treat 3xx as failure — chasing a Location the provider chose would send a live key somewhere nobody configured.</li>
+</ul>
+
+<h2>Header discipline</h2>
+<ul>
+  <li><code>HOP_BY_HOP_REQUEST</code> strips hop-by-hop, Vercel infra headers, and KeyProxy's own credentials (<code>x-master-key</code>, <code>x-endpoint-key</code>) so they never reach a vendor.</li>
+  <li>The provider's auth header is set <strong>last</strong>, so a caller-supplied header can never displace the injected key.</li>
+  <li><code>isWithinBase</code> asserts the assembled URL is still on the provider's origin and base path before any fetch.</li>
+</ul>
+
+<h2>Cooldown recovery</h2>
+<p><code>recoverCooldownKeys(config)</code> — hoisted to once per provider per run, so a five-step waterfall doesn't fire five of them. <code>resetCooldownKeys</code> uses <code>RETURNING id</code> (it used to return 0 unconditionally).</p>
+
+<h2>Proxy authentication</h2>
+<p><code>/api/proxy/[configId]/[...path]</code> authenticates by the config's <code>master_key</code> (header <code>x-master-key</code> or Bearer). This is the legacy plaintext pattern; waterfall endpoint keys are the hashed replacement pattern (see <a href="security.html">Security</a>). The debug route <code>/api/debug/…</code> is fail-closed behind <code>ENABLE_DEBUG_ROUTE=true</code>, rate-limited, and scrubs all output.</p>
+</main>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Architecture</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Architecture</h1>
+
+<h2>Stack</h2>
+<table>
+  <tr><th>Framework</th><td>Next.js 16 App Router (Turbopack), React 19, TypeScript 5, Tailwind 4</td></tr>
+  <tr><th>Database</th><td>Neon serverless Postgres via <code>@neondatabase/serverless</code> — HTTP driver, so <strong>no interactive transactions</strong>; multi-statement writes use batched <code>sql.transaction([...])</code>, and the driver has no <code>sql.query()</code> — raw statements are <code>sql(text)</code></td></tr>
+  <tr><th>Auth</th><td>HMAC-signed session cookie (<code>kp_session</code>, WebCrypto, edge-safe), scrypt passwords. Middleware proves a session is <em>valid</em>; per-route code proves it's <em>yours</em></td></tr>
+  <tr><th>Deploy</th><td>Vercel, 60s function ceiling — which is why runs enforce their own 50s deadline</td></tr>
+</table>
+
+<h2>Data model</h2>
+<table>
+  <tr><th>users</th><td>id, email, scrypt hash, is_admin</td></tr>
+  <tr><th>proxy_configs</th><td>a <em>provider</em>: target base URL, auth header name/prefix, rate-limit codes, cooldown, plaintext master_key (legacy pattern), owner_user_id</td></tr>
+  <tr><th>api_keys</th><td>the pool: key_value, order_index, status (active / exhausted / cooldown)</td></tr>
+  <tr><th>endpoints</th><td>a waterfall: slug, owner, active_version_id, revision (optimistic lock), cache + logging + rate-limit settings</td></tr>
+  <tr><th>endpoint_versions</th><td><strong>immutable</strong> JSONB definitions, one row per save, GIN-indexed</td></tr>
+  <tr><th>endpoint_keys</th><td>public key_id + SHA-256 key_hash, shown once, revocable — many per endpoint so rotation has a grace window</td></tr>
+  <tr><th>endpoint_runs / endpoint_run_steps</th><td>run history by allowlist; steps cascade with their run</td></tr>
+  <tr><th>endpoint_cache</th><td>cache_key (SHA-256) → stored result + expiry + hit_count</td></tr>
+  <tr><th>endpoint_rate_counters</th><td>per-key per-minute counters — the spend control</td></tr>
+</table>
+
+<h2>The one decision everything hangs off</h2>
+<p>A waterfall definition is <strong>one JSONB blob on an immutable version row</strong>, not a steps table. Because the Neon HTTP driver can't do interactive transactions, a multi-row save can't be atomic — and a half-saved waterfall doesn't just look wrong, it <em>runs</em> and spends money. One JSONB write is atomic by definition. It also gives:</p>
+<ul>
+  <li>Optimistic locking — <code>UPDATE … WHERE revision = $expected</code>; the loser gets a 409, not a silent overwrite.</li>
+  <li>The execution snapshot a run log needs — a run references the exact version it ran.</li>
+  <li>Cache invalidation for free — the version id is part of the cache key.</li>
+  <li>Restore as append — restoring copies an old version forward as a new one; history is never rewritten.</li>
+</ul>
+<p>Cost: no FK from steps to <code>proxy_configs</code>. Covered by save-time ownership checks (<code>endpointGuards.ts</code>), a <code>config_missing</code> step outcome at run time, and a delete guard (<code>endpointsUsingConfig</code>) that refuses to delete a referenced provider.</p>
+
+<h2>Layering</h2>
+<pre>src/lib/engine/*      pure functions, zero I/O   ← 134 tests run against this
+src/lib/runner.ts     server adapter: providers, rotation, scrubbing
+src/lib/rotation.ts   the key-rotation loop (shared by proxy + waterfalls)
+src/app/api/run/…     the public endpoint: auth → rate limit → run → after() log+cache</pre>
+<p>The engine takes its I/O as injected <code>deps</code>. That's what makes the expensive behaviour provable without credits: tests assert which providers were <em>not</em> called.</p>
+
+<h2>Schema creation</h2>
+<p><code>initSchema()</code> runs on cold start, cached per instance. The endpoint DDL is one batched transaction behind <code>pg_advisory_xact_lock</code> — <code>CREATE TABLE IF NOT EXISTS</code> races on concurrent cold starts. Post-hoc columns use <code>ADD COLUMN IF NOT EXISTS</code>; the <code>credits_used → upstream_calls</code> rename is guarded with a <code>DO $$</code> block since <code>RENAME COLUMN</code> has no <code>IF EXISTS</code>.</p>
+</main>
+</body>
+</html>

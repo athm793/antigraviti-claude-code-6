@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy — Brain</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<h1>KeyProxy — Brain</h1>
+<p class="subtitle">API key rotation proxy + conditional API waterfalls. Live at <a href="https://keyproxy.vercel.app">keyproxy.vercel.app</a> · repo <code>athm793/keyproxy</code> · local <code>C:\Users\Admin\Antigravity-Claude\keyproxy</code></p>
+
+<h2>What it is</h2>
+<p>Two products in one app, the second built on the first:</p>
+<ol>
+  <li><strong>Key-rotation proxy</strong> — one <em>provider</em> = one upstream API + a pool of keys. Calls to <code>/api/proxy/[configId]/…</code> pass through with the next active key injected; a rate-limited key is benched and the next one used.</li>
+  <li><strong>Waterfall endpoints</strong> — one public URL runs an ordered list of steps, each calling a different provider, with JSON rule trees deciding whether a step runs and whether it answered. Try Prospeo → no email → try BetterEnrich → Hunter. One response shape whichever provider answers, plus per-provider hit rates.</li>
+</ol>
+
+<h2>Status</h2>
+<p>All nine plan phases (0–8) shipped as of 25 Jul 2026. <span class="status open">Open</span> Phase 9: full UI/UX modernization sweep. Plan of record: <code>~/.claude/plans/cozy-shimmying-mist.md</code>.</p>
+
+<h2>Components</h2>
+<div class="card-grid">
+  <a class="card" href="architecture.html"><h3>Architecture</h3><p>Stack, data model, why JSONB versions, the immutability story</p></a>
+  <a class="card" href="proxy-rotation.html"><h3>Proxy &amp; rotation</h3><p>Key pools, exhaustion, cooldowns, timeouts, the shared rotation engine</p></a>
+  <a class="card" href="waterfalls.html"><h3>Waterfall engine</h3><p>Templates, conditions, output mapping, the executor, parallel groups</p></a>
+  <a class="card" href="builder.html"><h3>Builder UI</h3><p>Step cards, autocomplete, JSON view, test runs, validation</p></a>
+  <a class="card" href="runs-caching.html"><h3>Runs, analytics &amp; caching</h3><p>Run log allowlist, two-rates framing, cache keys, retention cron</p></a>
+  <a class="card" href="security.html"><h3>Security</h3><p>Ownership, egress guards, key hashing, injection defences, fail-closed gates</p></a>
+  <a class="card" href="build-log.html"><h3>Build log</h3><p>Newest-first record of every shipped phase</p></a>
+</div>
+
+<h2>What's partial / open</h2>
+<ul>
+  <li><span class="status open">Open</span> Phase 9 UI/UX sweep of every surface (checklist-first, per the standing rules).</li>
+  <li><span class="status open">Open</span> Regex <code>matches</code> operator — deferred on purpose (V8 has no regex timeout; subject strings come from upstream responses).</li>
+  <li><span class="status open">Open</span> Batch endpoint (array of inputs), idempotency keys, async runs past 60s — different product shape, not planned.</li>
+  <li><span class="status open">Open</span> Smaller gaps tracked in the README: webhook on pool exhaustion, CSV key import, Sentry, session revocation.</li>
+</ul>
+
+<h2>Operational facts</h2>
+<table>
+  <tr><th>Deploy</th><td><code>git push</code> then <code>npx vercel deploy --prod --yes</code> (Vercel project <code>antigraviti-claude-code-6</code>; domain <code>keyproxy.vercel.app</code>)</td></tr>
+  <tr><th>Tests</th><td><code>npm test</code> — 134 pure-engine checks, no network, no credits</td></tr>
+  <tr><th>Cron</th><td><code>vercel.json</code> schedules <code>/api/cron/prune</code> daily at 04:00; gated fail-closed on <code>CRON_SECRET</code> (set in prod)</td></tr>
+  <tr><th>DB</th><td>Neon serverless Postgres over the HTTP driver — <strong>no interactive transactions</strong>, only batched <code>sql.transaction([...])</code></td></tr>
+</table>
+</main>
+</body>
+</html>

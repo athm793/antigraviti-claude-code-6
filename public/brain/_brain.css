@@ -1,0 +1,48 @@
+/* Shared styles for the KeyProxy brain files. Light mode, professional. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font: 15px/1.6 -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #1a2333; background: #f7f8fa; padding: 40px 20px;
+}
+main { max-width: 880px; margin: 0 auto; }
+h1 { font-size: 26px; margin-bottom: 4px; }
+h2 { font-size: 19px; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #e3e6eb; }
+h3 { font-size: 16px; margin: 20px 0 6px; }
+p, li { color: #3c4557; }
+ul, ol { padding-left: 22px; margin: 8px 0; }
+li { margin: 4px 0; }
+a { color: #0a7d74; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre {
+  font-family: "SF Mono", Consolas, monospace; font-size: 13px;
+  background: #eef0f4; border-radius: 4px;
+}
+code { padding: 1px 5px; }
+pre { padding: 12px 14px; overflow-x: auto; margin: 10px 0; border: 1px solid #e3e6eb; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14px; }
+th, td { text-align: left; padding: 7px 10px; border: 1px solid #e3e6eb; vertical-align: top; }
+th { background: #eef0f4; font-weight: 600; }
+.crumb { font-size: 13px; color: #6b7486; margin-bottom: 18px; }
+.subtitle { color: #6b7486; margin-bottom: 24px; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; margin: 16px 0; }
+.card {
+  background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; padding: 16px;
+  display: block; color: inherit;
+}
+.card:hover { border-color: #0a7d74; text-decoration: none; }
+.card h3 { margin: 0 0 4px; font-size: 15px; }
+.card p { font-size: 13px; color: #6b7486; }
+.warn {
+  background: #fdf6e8; border: 1px solid #ecd9a8; border-radius: 8px;
+  padding: 12px 16px; margin: 12px 0; font-size: 14px;
+}
+.note {
+  background: #e9f5f4; border: 1px solid #bfe0dd; border-radius: 8px;
+  padding: 12px 16px; margin: 12px 0; font-size: 14px;
+}
+.log-entry { background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; padding: 16px; margin: 12px 0; }
+.log-entry .date { font-size: 12px; color: #6b7486; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.log-entry h3 { margin-top: 2px; }
+.status { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 4px; padding: 1px 8px; }
+.status.done { background: #dff2ef; color: #0a7d74; }
+.status.open { background: #eef0f4; color: #6b7486; }

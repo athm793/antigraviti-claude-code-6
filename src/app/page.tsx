@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { listConfigs } from "@/lib/db";
+import { countEndpointsPerConfig } from "@/lib/endpointsDb";
 import { getCurrentUser } from "@/lib/auth";
 import { ConfigCard } from "@/components/ConfigCard";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -14,7 +15,10 @@ export default async function HomePage() {
 
   // Scoped to the viewer: admins see everything, everyone else sees the
   // providers they own.
-  const configs = await listConfigs(user);
+  const [configs, usedBy] = await Promise.all([
+    listConfigs(user),
+    countEndpointsPerConfig(),
+  ]);
 
   return (
     <div className="max-w-5xl mx-auto flex flex-col gap-8">
@@ -63,7 +67,11 @@ export default async function HomePage() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {configs.map((config) => (
-            <ConfigCard key={config.id} config={config} />
+            <ConfigCard
+              key={config.id}
+              config={config}
+              usedByEndpoints={usedBy[config.id] ?? 0}
+            />
           ))}
         </div>
       )}

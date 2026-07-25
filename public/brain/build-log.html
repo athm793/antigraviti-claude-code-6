@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Build log</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Build log</h1>
+<p class="subtitle">Newest first. Every entry was verified before it was written; counts were actually run.</p>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
+  <h3>Phase 8 — polish: version history, used-by counts, brain folder <span class="status done">Shipped</span></h3>
+  <ul>
+    <li>Version history on Settings with restore-as-append (<code>/api/endpoints/[id]/versions</code>); Live badge and Restore share one fixed-width slot.</li>
+    <li>"Used by N endpoints" on provider cards via <code>countEndpointsPerConfig</code>, reserved line so card heights don't vary.</li>
+    <li>README brought current (all waterfall items ticked); this brain folder created (<code>public/brain/</code>, 8 files).</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
+  <h3>Phases 6–7 — JSON view + opt-in parallel fan-out <span class="status done">Shipped</span></h3>
+  <ul>
+    <li>Visual | JSON toggle; explicit Apply; both views stay mounted; staleness callout instead of silent overwrite; import/export with foreign-provider warning.</li>
+    <li>Executor restructured into stages; grouped steps run concurrently capped by <code>max_parallel</code>; merge in declared order, never completion order. All 124 prior checks passed untouched; 10 new parallel checks (134 total).</li>
+    <li>Verified live: two-member group ran both providers concurrently — 684ms total against 682+661ms of latency; declared-order rule picked the answering member.</li>
+    <li>Caught in verification: missing $ on the group cost estimate; "Runs if step 1 didn't answer" shown for a parallel sibling (now "Runs with the steps beside it").</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
+  <h3>Phase 5 — run history, hit rates, caching, retention <span class="status done">Shipped</span></h3>
+  <ul>
+    <li>Runs tab: stat strip, provider performance with the two-rates callout, paginated run list (15/page), run detail with per-step condition traces.</li>
+    <li>Cache keyed owner+endpoint+version+input; hit measured at 0 calls / 209ms vs 1147ms cold; publishing a new version invalidated as designed. Misses and errors never cached.</li>
+    <li>Nightly prune cron, fail-closed on <code>CRON_SECRET</code> (set in prod and verified: wrong secret 404s, real one prunes). Backdated-run deletion + cascade verified.</li>
+    <li>Renamed <code>endpoint_runs.credits_used → upstream_calls</code> (it counts HTTP requests incl. rotation retries, not vendor credits) with a guarded migration.</li>
+    <li>Fixed: "stored encrypted" copy (keys are hashed, a different guarantee); JSX whitespace jam ("Share of answersis"); cache-panel dead line; run-filter empty state collapsing the card.</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
+  <h3>Phase 4 — executor, public run endpoint, test runs <span class="status done">Shipped</span></h3>
+  <ul>
+    <li><code>POST /api/run/[slug]</code>: hashed-key auth, DB rate limit per key (verified 429 + Retry-After), input validation, 50s self-enforced deadline, miss-is-200 contract.</li>
+    <li>Pure executor with injected deps; 37 new checks proving a hit never calls the vendors below it, a 200-with-empty-field falls through, skips cost nothing, deadline stops new starts.</li>
+    <li>Fixed two escalations on <code>PUT /definition</code>: it never validated, and never checked provider ownership — anyone could save a definition spending someone else's keys.</li>
+    <li>Verified end-to-end against two live providers; no key value anywhere in response, log, or trace.</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">25 Jul 2026</div>
+  <h3>Phase 3 — pure engine + visual builder <span class="status done">Shipped</span></h3>
+  <ul>
+    <li>Templates (type-preserving sole placeholders, object-walked JSON), rule trees with full traces, output mapping, shared validator, token autocomplete, prose step summaries. First test suite in the repo (77 checks then).</li>
+    <li>Portal <code>Popover</code> created after the in-trigger version was clipped by <code>overflow-x-auto</code> tables.</li>
+  </ul>
+</div>
+
+<div class="log-entry">
+  <div class="date">Earlier (see git log for detail)</div>
+  <h3>Phases 0–2 — ownership, rotation refactor, endpoint schema/shell <span class="status done">Shipped</span></h3>
+  <ul>
+    <li>Phase 0: per-user ownership; fixed two pre-existing criticals (plaintext key listing; config repointing = key theft); egress guards; UI primitive set; key previews.</li>
+    <li>Phase 1: rotation extracted to <code>rotation.ts</code> returning an unconsumed Response; per-attempt timeouts; exclude-burned-keys; race-aware exhaustion.</li>
+    <li>Phase 2: endpoints/versions/keys/runs/cache schema behind an advisory lock; hashed endpoint keys (hex keyId after the base64url separator bug); endpoints list/new/tabs shell; optimistic-lock saves; provider delete guard.</li>
+  </ul>
+</div>
+</main>
+</body>
+</html>

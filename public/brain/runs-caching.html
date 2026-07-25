@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Runs, analytics &amp; caching</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Runs, analytics &amp; caching</h1>
+
+<h2>Run log (<code>runLog.ts</code>)</h2>
+<ul>
+  <li>Written by <strong>allowlist</strong> — ids, statuses, timings, counts, condition traces — never by dumping the run object. This is contact-enrichment traffic; logging everything by default would turn a credentials product into a PII store.</li>
+  <li>The caller's input is stored (capped at 4KB) so a row is recognisable. The <strong>result is not stored</strong> unless the endpoint opts into "Save request and response bodies".</li>
+  <li>One batched transaction (header + step rows) inside <code>after()</code> — costs the caller nothing, and a failed log can never turn a successful run into an error.</li>
+  <li>Test runs are deliberately never logged.</li>
+</ul>
+
+<h2>Analytics (<code>runAnalytics.ts</code>, Runs tab)</h2>
+<div class="note"><strong>The two-rates framing is deliberate and must not be collapsed into one column.</strong> A later step in a waterfall only sees the cases everything before it missed, so raw success rates aren't comparable between steps.</div>
+<ul>
+  <li><strong>Hit rate</strong> — of the runs where the step actually ran. For watching one provider over time.</li>
+  <li><strong>Share of answers</strong> — of every run that got an answer. The "what would I lose by dropping it" number.</li>
+  <li><strong>Cost per answer</strong> — the number that decides whether a vendor stays.</li>
+  <li><code>hit_rate</code> is <code>null</code> when a step never ran — "no data" and "0%" are opposite conclusions and must not render identically.</li>
+  <li>Step names in analytics come from the run rows (name at the time), so a renamed step doesn't rewrite its own history.</li>
+</ul>
+
+<h2>Caching (<code>runCache.ts</code>, <code>engine/cacheKey.ts</code>)</h2>
+<ul>
+  <li>Cache key = SHA-256 over <code>owner + endpoint + version + canonicalized input</code>.</li>
+  <li>Owner in the key: one tenant's enriched contact can never be served to another.</li>
+  <li>Version in the key <em>is</em> the invalidation story: edit a step, every old answer goes cold, nothing to remember to purge. Verified live.</li>
+  <li>Canonicalization: key-order independent; strings trimmed + lowercased by default (<code>cache_key_normalize</code>); include/exclude field lists; array order still matters.</li>
+  <li>Only <code>success</code> and <code>partial</code> cached. A <code>miss</code> is not — vendors keep adding data, "nobody had it yesterday" shouldn't stop you asking today. An <code>error</code> is not — it's transient.</li>
+  <li>Manual purge on Settings is for the case versioning can't cover: the provider's data changed and the definition didn't.</li>
+  <li>Measured: cache hit = 0 upstream calls, 209ms vs 1147ms cold.</li>
+</ul>
+
+<h2>Rate limiting (<code>consumeEndpointRate</code>)</h2>
+<p>Per endpoint key, counted in the <strong>database</strong> with an atomic upsert per minute window — not the in-memory limiter, which is per-instance and keyed on a spoofable <code>x-forwarded-for</code>. Fine for a dashboard button; useless when every request buys upstream calls. 429s carry <code>Retry-After</code>. Verified: limit 2 → third call 429.</p>
+
+<h2>Retention (<code>/api/cron/prune</code>)</h2>
+<ul>
+  <li>Daily at 04:00 via <code>vercel.json</code>. Deletes runs older than each endpoint's own <code>log_retention_days</code> (default 30), expired cache rows, stale rate counters. Step rows cascade.</li>
+  <li>Gated <strong>fail-closed</strong> on <code>CRON_SECRET</code> (constant-time compare): with no secret set it rejects everything — an open deletion endpoint would be worse than a cron that doesn't run. Secret is set on the Vercel project.</li>
+  <li>Verified: a backdated run and its step rows were removed; nothing else was.</li>
+</ul>
+
+<h2>Version history</h2>
+<p>Settings lists the last 20 versions with restore. Restore writes the old definition forward as a new version — append-only history, run-log references stay valid, and undoing a restore is just another restore.</p>
+</main>
+</body>
+</html>

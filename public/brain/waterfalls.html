@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Waterfall engine</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Waterfall engine</h1>
+<p class="subtitle">All of <code>src/lib/engine/</code> is pure — no sockets, no DB, no logs. 134 checks in <code>tests/engine.test.mjs</code> run against the compiled output (<code>npm test</code>), zero credits.</p>
+
+<h2>Templates (<code>template.ts</code>, <code>paths.ts</code>)</h2>
+<ul>
+  <li>Placeholders name paths, nothing else: <code>{{input.domain}}</code>, <code>{{steps.prospeo.output.email}}</code>. No eval, no expression language.</li>
+  <li>Roots are a closed list — <code>input, steps, response, result, run</code>. No <code>env</code>/<code>process</code>, so no template can reach a secret.</li>
+  <li><strong>A template that is exactly one placeholder keeps the resolved value's type</strong>: <code>{"limit":"{{input.limit}}"}</code> → <code>{"limit":50}</code>, not <code>"50"</code>.</li>
+  <li>JSON bodies are built by <strong>walking the stored object</strong> and stringifying once at the end — never splicing into a JSON string, which breaks on the first quote and lets a caller inject fields into an authenticated request.</li>
+  <li><code>__proto__/constructor/prototype</code> blocked on read <em>and</em> write; contexts are null-prototype. The write side is the one that matters — assigning through <code>__proto__</code> would pollute the warm instance for other callers.</li>
+  <li><code>result.*</code> reads what the run has merged so far — "only call this vendor if we still have no email" without naming every earlier step.</li>
+</ul>
+
+<h2>Conditions (<code>rules.ts</code>)</h2>
+<ul>
+  <li>JSON trees (<code>all / any / not / leaf</code>), 18 operators, deliberately no regex (no V8 regex timeout; subjects come from upstream).</li>
+  <li><code>empty</code> means missing / null / "" / [] / {} — <strong><code>0</code> and <code>false</code> are NOT empty</strong>; a confidence of 0 is a real answer.</li>
+  <li>The evaluator returns a full trace, never just a bool, and doesn't short-circuit — "why was this step skipped?" is always answerable.</li>
+  <li>Default success rule = 2xx AND every required output non-empty. This is what the feature rests on: a 200 with <code>{"email": null}</code> has not resolved anything and must fall through.</li>
+</ul>
+
+<h2>Requests (<code>request.ts</code>)</h2>
+<ul>
+  <li>Path segments resolved and encoded individually; <code>.</code>/<code>..</code> rejected; a missing path value fails the step <em>before</em> any billed call.</li>
+  <li>Query via <code>URLSearchParams</code>; a missing value drops the parameter entirely (<code>?email=</code> and no <code>email</code> mean different things).</li>
+  <li>Headers: reserved names and the provider's auth header rejected; a resolved value containing CR/LF rejected (header forgery).</li>
+</ul>
+
+<h2>Executor (<code>execute.ts</code>)</h2>
+<ul>
+  <li>Steps are grouped into <strong>stages</strong> — one ungrouped step, or a run of consecutive steps sharing a <code>group</code>.</li>
+  <li>A grouped stage runs its members concurrently (worker pool, capped by <code>max_parallel</code>), but results merge in <strong>declared order, never completion order</strong> — same inputs must give same outputs. There's a test where the second member finishes first and the first still wins.</li>
+  <li>Merge modes per group: <code>first_success</code> (first hit in listed order), <code>fill_empty</code>, <code>collect</code>. When nobody answers, the strictest <code>on_failure</code> among members decides: fail &gt; stop &gt; continue.</li>
+  <li><code>mergeOutput</code>: first write wins, empty never overwrites — a later gap-filler can't blank out what an earlier provider found.</li>
+  <li>Deadline checked once per stage (starting half a group wastes money); nothing starts with &lt;1s left; a run resolves before the deadline still returns success.</li>
+  <li>Run statuses: <code>success</code> / <code>partial</code> / <code>miss</code> / <code>error</code>. <strong>A miss is HTTP 200</strong> — Clay, n8n, Make, Zapier treat non-2xx as failure and retry or halt the row. Only genuine breakage is a 502.</li>
+</ul>
+
+<h2>Validation (<code>validate.ts</code>)</h2>
+<p>One validator shared by the builder (every keystroke), the JSON view, the save route, and the test route — if they disagreed you'd get definitions that save but won't run. Rejects duplicate step keys, forward references, same-group sibling references, self-references, string JSON bodies, unknown operators, non-contiguous groups. Caps in <code>LIMITS</code> (12 steps, 5 key attempts/step, 8 parallel…) are the spend-control backstop. Unknown top-level keys are preserved in <code>_extra</code>, not stripped.</p>
+
+<h2>Server adapter (<code>runner.ts</code>)</h2>
+<ul>
+  <li>Loads each distinct provider once; cooldown recovery once per provider per run; burned keys shared across steps on the same pool.</li>
+  <li><code>verifyTarget: true</code> per step — DNS re-resolved immediately before the fetch, because it can be repointed after the provider was saved.</li>
+  <li>Response bodies read streamed with a 2MB cap; 3xx refused; hard 50s deadline against Vercel's 60s so a timeout still produces a complete log.</li>
+  <li>Every key value in play is scrubbed from the result before it can reach a response or log (<code>redact.ts</code> — safety net, not guarantee; ownership is the structural control).</li>
+</ul>
+</main>
+</body>
+</html>

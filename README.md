@@ -1,6 +1,6 @@
 # KeyProxy — API Key Pool Manager & Rotation Proxy
 
-> **Work in progress.** Core proxy, key rotation, per-user ownership, and the dashboard are production-ready. Conditional API waterfalls — chaining several different APIs behind one endpoint — are being built on top. See [Planned](#planned).
+> Core proxy, key rotation, per-user ownership, the dashboard, and conditional API waterfalls — several different APIs chained behind one endpoint, with run logs, per-provider hit rates, result caching and opt-in parallel fan-out — are all live. See [Running a waterfall](#running-a-waterfall).
 
 Stop your outbound campaigns from dying on rate limits. KeyProxy sits between your automation stack and any upstream API — when one key gets throttled, it instantly rotates to the next. Your campaigns keep running.
 
@@ -91,8 +91,8 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 - [x] Public execution endpoint, plus a test run against the unsaved draft
 - [x] Run logs and per-provider hit rates
 - [x] Result caching keyed on owner + endpoint + version + input
-- [ ] JSON view of a definition, for copy/paste and versioning
-- [ ] Opt-in parallel fan-out with declared-order merging
+- [x] JSON view of a definition, with import/export
+- [x] Opt-in parallel fan-out with declared-order merging
 
 Smaller gaps still open:
 

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KeyProxy Brain — Builder UI</title>
+<link rel="stylesheet" href="_brain.css">
+</head>
+<body>
+<main>
+<p class="crumb"><a href="index.html">← Brain</a></p>
+<h1>Builder UI</h1>
+<p class="subtitle"><code>src/components/builder/</code> — the Build tab of an endpoint. All editing is local state; only Save touches the wire.</p>
+
+<h2>Shape</h2>
+<ul>
+  <li><code>EndpointBuilder</code> owns the draft and never re-seeds from props after mount (a <code>router.refresh()</code> re-renders the server shell around the island).</li>
+  <li>Steps render grouped into stages, mirroring the engine: sequence steps get stage numbers, parallel-group members get <strong>letters</strong> (a numbered list would claim an order that doesn't exist).</li>
+  <li>Collapsed step rows read as prose: "Runs if step 1 didn't answer", "Runs with the steps beside it".</li>
+  <li>Live validation via the shared validator; Save disabled with a reason while errors exist; per-step issues render on their card.</li>
+  <li>Renaming a step's reference key rewrites every template that points at it (<code>renameStepKey</code>).</li>
+  <li><code>{{</code>-autocomplete (<code>TokenInput</code>) scoped to what's actually available at that step's position — inputs, prior non-sibling steps, <code>response.*</code>.</li>
+  <li>All popovers portal through <code>components/ui/Popover.tsx</code> (fixed, rect-positioned, flips near edges) — tables clip absolute-positioned dropdowns.</li>
+</ul>
+
+<h2>Visual | JSON toggle</h2>
+<ul>
+  <li>Visual → JSON is live; JSON → visual needs an explicit <strong>Apply</strong> (a half-typed brace must not wipe the visual state).</li>
+  <li>Both views stay mounted with one hidden — unmounting would collapse expanded steps, drop the last test result, and silently discard unapplied JSON text.</li>
+  <li>If the builder changes under unapplied text, the text is left alone and a staleness callout appears; Apply of stale text is the second-worst outcome after overwriting typed text.</li>
+  <li>Import loads a file into the editor, <em>not</em> into the builder. Foreign <code>config_id</code>s are called out up front with the step names — provider ids don't travel between accounts.</li>
+</ul>
+
+<h2>Parallel groups (<code>ParallelGroup.tsx</code>)</h2>
+<p>A group is a container, not a per-step flag. Header: member count, the <code>Take:</code> merge-mode select, and the cost warning ("About $0.17 per run — every one of them is called") because "parallel = you pay everyone, every time" is the expensive misunderstanding. Joining/splitting is a toggle on each non-first step; a group left with one member is dissolved.</p>
+
+<h2>Test runs (<code>TestRunPanel.tsx</code>)</h2>
+<ul>
+  <li>Tests the <strong>unsaved draft</strong> via <code>POST /api/endpoints/[id]/test</code> — nothing persisted, so experiments can't pollute hit rates, and you don't have to publish to find out if it works.</li>
+  <li>Live calls, real credits — the panel says so.</li>
+  <li>Per-step rows open to the condition traces ("Should it run?" / "Did it answer?"), unresolved placeholders, the actual URL, and the response preview (test runs always include bodies — it's the author debugging their own providers).</li>
+  <li>Step cards show the last test outcome in a reserved fixed-width slot; any edit clears it — a stale badge reads as "this still works".</li>
+</ul>
+
+<h2>Known UI rules honoured here</h2>
+<ul>
+  <li>44px min targets everywhere; inline SVG icons only; no native selects; portal popovers; reserved slots so results/statuses appearing never shift controls; tabular numerals on all counts.</li>
+</ul>
+</main>
+</body>
+</html>
