@@ -8,7 +8,6 @@ import {
   tableHeadRowCls,
   tableRowCls,
   tableTdCls,
-  tableThCls,
 } from "@/lib/ui";
 
 /**
@@ -50,7 +49,15 @@ export function EndpointsTable({
                 currentDir={dir}
                 hrefFor={hrefFor}
               />
-              <th scope="col" className={`${tableThCls} w-20 text-right`}>Steps</th>
+              <SortableTh
+                label="Steps"
+                sortKey="steps"
+                currentSort={sort}
+                currentDir={dir}
+                hrefFor={hrefFor}
+                align="right"
+                className="w-20"
+              />
               <SortableTh
                 label="Hit rate"
                 sortKey="hit_rate"
@@ -69,7 +76,14 @@ export function EndpointsTable({
                 align="right"
                 className="w-28"
               />
-              <th scope="col" className={`${tableThCls} w-24`}>Status</th>
+              <SortableTh
+                label="Status"
+                sortKey="status"
+                currentSort={sort}
+                currentDir={dir}
+                hrefFor={hrefFor}
+                className="w-24"
+              />
               <SortableTh
                 label="Updated"
                 sortKey="updated"
@@ -158,17 +172,23 @@ function HitRate({ rate }: { rate: number | null }) {
   );
 }
 
-function StatusBadge({ endpoint }: { endpoint: EndpointWithStats }) {
+/**
+ * The one place a status is decided, so the badge and the status sort can't
+ * drift apart. `rank` is the lifecycle order — how close the endpoint is to
+ * actually serving traffic — because sorting these labels alphabetically would
+ * put "Draft" above "Live" and mean nothing.
+ */
+function endpointStatus(endpoint: EndpointWithStats) {
   // Order matters: a paused endpoint with no steps is best described as
   // "Draft", because that's the thing to fix first.
-  const { tone, label } =
-    endpoint.step_count === 0
-      ? { tone: badgeTones.neutral, label: "Draft" }
-      : !endpoint.enabled
-        ? { tone: badgeTones.warning, label: "Paused" }
-        : !endpoint.has_key
-          ? { tone: badgeTones.danger, label: "No key" }
-          : { tone: badgeTones.brand, label: "Live" };
+  if (endpoint.step_count === 0) return { tone: badgeTones.neutral, label: "Draft", rank: 3 };
+  if (!endpoint.enabled) return { tone: badgeTones.warning, label: "Paused", rank: 2 };
+  if (!endpoint.has_key) return { tone: badgeTones.danger, label: "No key", rank: 1 };
+  return { tone: badgeTones.brand, label: "Live", rank: 0 };
+}
+
+function StatusBadge({ endpoint }: { endpoint: EndpointWithStats }) {
+  const { tone, label } = endpointStatus(endpoint);
 
   return <span className={`${badgeBase} ${tone} min-w-[4.5rem] justify-center`}>{label}</span>;
 }
@@ -196,6 +216,12 @@ function sortEndpoints(
       }
       case "runs":
         return factor * (a.runs_7d - b.runs_7d);
+      case "steps":
+        return factor * (a.step_count - b.step_count);
+      case "status":
+        // Ascending puts the live ones first, which is the order someone
+        // scanning for what's actually serving traffic expects.
+        return factor * (endpointStatus(a).rank - endpointStatus(b).rank);
       case "updated":
       default:
         return factor * (Date.parse(a.updated_at) - Date.parse(b.updated_at));

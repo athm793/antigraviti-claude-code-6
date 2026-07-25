@@ -10,5 +10,10 @@
     "strict": true,
     "noEmitOnError": true
   },
-  "include": ["src/lib/engine/**/*.ts", "src/lib/endpointTypes.ts"]
+  "include": [
+    "src/lib/engine/**/*.ts",
+    "src/lib/endpointTypes.ts",
+    "src/lib/csvKeys.ts",
+    "src/lib/slug.ts"
+  ]
 }

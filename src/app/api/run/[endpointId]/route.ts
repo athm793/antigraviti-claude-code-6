@@ -11,7 +11,31 @@ import { validateRunInput } from "@/lib/engine/input";
 import { executeEndpointRun, HARD_DEADLINE_MS } from "@/lib/runner";
 import { cacheKeyFor, readCache, writeCache } from "@/lib/runCache";
 import { persistRun } from "@/lib/runLog";
+import { logEvent } from "@/lib/log";
 import type { RunResult } from "@/lib/engine/execute";
+
+/**
+ * The record written when the executor itself threw.
+ *
+ * Deliberately carries no detail beyond "it failed": the thrown message can
+ * contain a target hostname or a fragment of an upstream body, and this row
+ * is readable in the dashboard.
+ */
+function failedRunResult(runId: string): RunResult {
+  void runId;
+  return {
+    status: "error",
+    output: {},
+    raw: null,
+    resolved_by: null,
+    steps: [],
+    duration_ms: 0,
+    cost_cents: 0,
+    upstream_calls: 0,
+    missing_outputs: [],
+    error: "The run failed unexpectedly",
+  };
+}
 
 /**
  * The public endpoint. One URL, one JSON body in, one normalized result out.
@@ -149,6 +173,11 @@ export async function POST(
         upstream_calls: 0,
         cost_cents: 0,
         cache_hit: true,
+        // A cache hit is still a logged run under this id, so a caller that
+        // records meta.run_id to reopen it later must get one here too.
+        // Omitting it broke correlation on exactly the cheap requests an
+        // automation makes most of.
+        run_id: runId,
       };
       after(async () => {
         try {
@@ -171,6 +200,10 @@ export async function POST(
               error: null,
             },
           });
+          // A cache-served request still used the key, so its last-used
+          // stamp must move — otherwise a key serving nothing but cache hits
+          // looks dormant and could be revoked as unused.
+          await touchEndpointKey(keyRecordId);
         } catch (err) {
           console.error("[run] could not log cache hit", runId, err);
         }
@@ -206,36 +239,72 @@ export async function POST(
     // Never surface the raw message: it can carry a target hostname or a
     // fragment of an upstream response.
     console.error("[run] unexpected failure", endpointId, err);
+    logEvent("error", "run_failed", {
+      endpoint: endpoint.slug,
+      run_id: runId,
+      reason: "executor_threw",
+    });
+    // Log the runs that blew up, not just the ones that worked.
+    //
+    // Returning here without persisting meant the failures were invisible in
+    // run history, so hit rates and spend were computed over a sample biased
+    // towards success — exactly the runs an operator least needs to inspect
+    // were the ones with no record.
+    after(async () => {
+      try {
+        await persistRun({
+          runId,
+          endpoint,
+          versionId: version?.id ?? null,
+          input: input.value,
+          cacheHit: false,
+          result: failedRunResult(runId),
+        });
+      } catch (logErr) {
+        console.error("[run] could not record failed run", runId, logErr);
+      }
+    });
     return json({ error: "The run failed unexpectedly" }, 500);
   }
 
   // Logging and caching happen after the response is sent, so they cost the
   // caller nothing — this is a request they are waiting on to enrich a row.
   after(async () => {
-    try {
-      await persistRun({
+    // Independent, not chained.
+    //
+    // These three were awaited in sequence inside one try, so a persistRun
+    // failure — the likeliest of the three, since it writes a batched
+    // multi-row transaction — silently skipped the cache write, throwing away
+    // a result that had already been paid for and making the next identical
+    // request re-buy it. They share nothing; settle them separately.
+    const outcomes = await Promise.allSettled([
+      persistRun({
         runId,
         endpoint,
         versionId: version?.id ?? null,
         input: input.value,
         cacheHit: false,
         result,
-      });
-      if (cacheKey) {
-        await writeCache(
-          cacheKey,
-          endpoint.id,
-          version?.id ?? null,
-          runId,
-          result,
-          endpoint.cache_ttl_seconds
-        );
+      }),
+      cacheKey
+        ? writeCache(
+            cacheKey,
+            endpoint.id,
+            version?.id ?? null,
+            runId,
+            result,
+            endpoint.cache_ttl_seconds
+          )
+        : Promise.resolve(),
+      touchEndpointKey(keyRecordId),
+    ]);
+
+    // A failed log must never turn a successful run into an error for the
+    // caller — they already have their answer.
+    for (const outcome of outcomes) {
+      if (outcome.status === "rejected") {
+        console.error("[run] could not record run", runId, outcome.reason);
       }
-      await touchEndpointKey(keyRecordId);
-    } catch (err) {
-      // A failed log must never turn a successful run into an error for the
-      // caller — they already have their answer.
-      console.error("[run] could not record run", runId, err);
     }
   });
 

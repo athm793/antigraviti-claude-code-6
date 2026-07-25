@@ -84,7 +84,7 @@ export function VersionHistory({
           return (
             <div
               key={version.id}
-              className="flex items-center gap-3 min-h-[52px] border-b border-[#1a1a28] last:border-0"
+              className="flex items-center gap-3 min-h-[60px] py-2 border-b border-[#1a1a28] last:border-0"
             >
               <span className={`text-sm text-white w-12 shrink-0 ${numericCls}`}>
                 v{version.version_no}
@@ -111,7 +111,9 @@ export function VersionHistory({
                     type="button"
                     onClick={() => setConfirming(version)}
                     disabled={restoring !== null}
-                    className={`${btnSecondary} gap-1.5 w-full !min-h-[36px] text-xs`}
+                    // Keeps btnSecondary's 44px target: the row was overriding
+                    // it down to 36px, which the shared tokens call a hard rule.
+                    className={`${btnSecondary} gap-1.5 w-full text-xs`}
                   >
                     {restoring === version.id ? (
                       <Spinner className="w-3.5 h-3.5" />

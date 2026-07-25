@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import { formatNumber } from "@/lib/format";
+import { focusRingCls } from "@/lib/ui";
 
 /**
  * Link-based tabs — real navigations, not client state.
@@ -39,7 +40,7 @@ export function Tabs({
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`min-h-[44px] inline-flex items-center gap-2 px-3 text-sm border-b-2 -mb-px whitespace-nowrap transition-colors ${
+            className={`min-h-[44px] inline-flex items-center gap-2 px-3 text-sm border-b-2 -mb-px whitespace-nowrap transition-colors kp-press ${focusRingCls} ${
               active
                 ? "text-white border-[#00C4B4]"
                 : "text-[#8b8b9e] border-transparent hover:text-white"

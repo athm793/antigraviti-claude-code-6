@@ -20,6 +20,13 @@ import { createPortal } from "react-dom";
 
 const SHOW_DELAY_MS = 300;
 
+/**
+ * How long the fade-out runs before the tip unmounts. Matches the modal and
+ * the popover: an overlay that vanishes on the frame it's dismissed reads as a
+ * glitch rather than as a dismissal.
+ */
+const EXIT_MS = 100;
+
 interface TipState {
   text: string;
   top: number;
@@ -30,7 +37,9 @@ interface TipState {
 
 export function TooltipLayer() {
   const [tip, setTip] = useState<TipState | null>(null);
+  const [closing, setClosing] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const exitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const anchor = useRef<Element | null>(null);
 
   useEffect(() => {
@@ -47,6 +56,9 @@ export function TooltipLayer() {
       const place = () => {
         // Re-read the rect at fire time — the layout may have shifted.
         if (anchor.current !== target || !target.isConnected) return;
+        // A tip re-shown mid fade-out replaces it rather than waiting it out.
+        if (exitTimer.current) clearTimeout(exitTimer.current);
+        setClosing(false);
         const box = target.getBoundingClientRect();
         const flipped = box.top < 44;
         setTip({
@@ -63,12 +75,22 @@ export function TooltipLayer() {
       else timer.current = setTimeout(place, SHOW_DELAY_MS);
     }
 
+    /** Starts the fade-out; the tip unmounts once it has run. */
+    function beginHide() {
+      anchor.current = null;
+      if (timer.current) clearTimeout(timer.current);
+      setClosing(true);
+      if (exitTimer.current) clearTimeout(exitTimer.current);
+      exitTimer.current = setTimeout(() => {
+        setTip(null);
+        setClosing(false);
+      }, EXIT_MS);
+    }
+
     function hide(node: EventTarget | null) {
       const target = findTarget(node);
       if (target !== anchor.current) return;
-      anchor.current = null;
-      if (timer.current) clearTimeout(timer.current);
-      setTip(null);
+      beginHide();
     }
 
     const onOver = (e: MouseEvent) => {
@@ -82,11 +104,7 @@ export function TooltipLayer() {
     };
     const onBlur = (e: FocusEvent) => hide(e.target);
     // Scrolling detaches the tip from its anchor; drop it rather than chase.
-    const onScroll = () => {
-      anchor.current = null;
-      if (timer.current) clearTimeout(timer.current);
-      setTip(null);
-    };
+    const onScroll = () => beginHide();
 
     document.addEventListener("mouseover", onOver);
     document.addEventListener("mouseout", onOut);
@@ -100,6 +118,7 @@ export function TooltipLayer() {
       document.removeEventListener("focusout", onBlur);
       window.removeEventListener("scroll", onScroll, true);
       if (timer.current) clearTimeout(timer.current);
+      if (exitTimer.current) clearTimeout(exitTimer.current);
     };
   }, []);
 
@@ -110,7 +129,7 @@ export function TooltipLayer() {
       role="tooltip"
       className={`fixed z-[70] pointer-events-none -translate-x-1/2 ${
         tip.flipped ? "" : "-translate-y-full"
-      } kp-overlay-in`}
+      } ${closing ? "kp-overlay-out" : "kp-overlay-in"}`}
       style={{ top: tip.top, left: tip.left }}
     >
       <div className="bg-[#1c1c28] border border-[#363650] rounded-lg px-3 py-1.5 text-xs text-[#e8e8f0] shadow-xl shadow-black/40 max-w-[18rem] text-center">

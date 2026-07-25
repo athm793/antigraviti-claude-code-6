@@ -6,6 +6,10 @@ import { btnDanger, btnSecondary } from "@/lib/ui";
 /** How long the exit animation runs before the modal actually unmounts. */
 const EXIT_MS = 100;
 
+/** Everything inside the dialog that Tab can reach. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function ConfirmModal({
   open,
   title,
@@ -22,6 +26,8 @@ export function ConfirmModal({
   onCancel: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   /**
    * Mounted outlives `open` by one exit animation: an overlay that vanishes
@@ -46,15 +52,64 @@ export function ConfirmModal({
     return () => clearTimeout(timer);
   }, [open, mounted]);
 
+  /**
+   * Focus has to wait for `mounted`: on the render where `open` flips true the
+   * dialog isn't in the DOM yet, so the ref is still null and focusing it there
+   * silently does nothing. Depending on `mounted` re-runs this once the markup
+   * actually exists.
+   */
+  useEffect(() => {
+    if (!open || !mounted) return;
+    // Remember the trigger before moving focus, so dismissing puts the caret
+    // back where the user left it rather than at the top of the document.
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    cancelRef.current?.focus();
+    return () => returnFocusRef.current?.focus();
+  }, [open, mounted]);
+
   useEffect(() => {
     if (!open) return;
-    cancelRef.current?.focus();
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape") {
+        onCancel();
+        return;
+      }
+      if (e.key !== "Tab") return;
+
+      // aria-modal alone doesn't take the rest of the page out of the tab
+      // order, so without this Tab walks out of the dialog and onto controls
+      // the user can't even see behind the overlay.
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      const outside = !(active instanceof Node) || !dialog.contains(active);
+
+      if (e.shiftKey && (outside || active === first)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (outside || active === last)) {
+        e.preventDefault();
+        first.focus();
+      }
     }
+
     document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
+
+    // Scroll lock. A page that scrolls behind a modal is disorienting, and on
+    // touch it can carry the dialog itself off screen.
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [open, onCancel]);
 
   if (!mounted) return null;
@@ -67,6 +122,7 @@ export function ConfirmModal({
       onClick={onCancel}
     >
       <div
+        ref={dialogRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-modal-title"

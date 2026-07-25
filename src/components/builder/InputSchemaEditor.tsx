@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Select } from "../ui/Select";
 import { Toggle } from "../ui/Toggle";
 import { Plus, X } from "../ui/Icon";
@@ -21,6 +22,18 @@ import {
  * example values prefill the test runner, so declaring them up front is what
  * makes the rest of the builder able to autocomplete.
  */
+
+/**
+ * Row identity, for React only.
+ *
+ * A field's name is the obvious key but it is blank the moment a row is added
+ * and can be typed into a duplicate, so one is minted here instead and never
+ * written back into the definition. Keying by index hands a removed row's open
+ * dropdown and focus to whichever row slides up into its place.
+ */
+let rowSeq = 0;
+const nextRowId = () => `row${(rowSeq += 1)}`;
+
 export function InputSchemaEditor({
   inputs,
   onChange,
@@ -28,8 +41,21 @@ export function InputSchemaEditor({
   inputs: InputField[];
   onChange: (inputs: InputField[]) => void;
 }) {
+  // Inputs also arrive from outside (a JSON apply), so the id list is topped up
+  // against the incoming length rather than only when a row is added.
+  const idsRef = useRef<string[]>([]);
+  if (idsRef.current.length !== inputs.length) {
+    idsRef.current = inputs.map((_, i) => idsRef.current[i] ?? nextRowId());
+  }
+  const ids = idsRef.current;
+
   function update(index: number, patch: Partial<InputField>) {
     onChange(inputs.map((field, i) => (i === index ? { ...field, ...patch } : field)));
+  }
+
+  function remove(index: number) {
+    idsRef.current = idsRef.current.filter((_, i) => i !== index);
+    onChange(inputs.filter((_, i) => i !== index));
   }
 
   return (
@@ -58,7 +84,7 @@ export function InputSchemaEditor({
             </thead>
             <tbody>
               {inputs.map((field, index) => (
-                <tr key={index}>
+                <tr key={ids[index]}>
                   <td className="py-1.5 pr-2 align-top">
                     <input
                       value={field.name}
@@ -98,7 +124,7 @@ export function InputSchemaEditor({
                   <td className="py-1.5 align-top">
                     <button
                       type="button"
-                      onClick={() => onChange(inputs.filter((_, i) => i !== index))}
+                      onClick={() => remove(index)}
                       aria-label={`Remove ${field.name || "input"}`}
                       data-tip="Remove input"
                       className={btnIcon}

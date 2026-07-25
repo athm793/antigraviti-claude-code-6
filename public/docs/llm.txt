@@ -188,9 +188,12 @@ Available roots (a closed list — anything else fails validation):
 | `steps.<key>.output.<field>` | A field an **earlier** step mapped | everywhere |
 | `steps.<key>.body.<path>` | An earlier step's raw response body | everywhere |
 | `steps.<key>.status` | An earlier step's HTTP status | everywhere |
+| `steps.<key>.headers.<name>` | An earlier step's response headers. Names are lower-cased, so use `headers.retry-after` | everywhere |
+| `steps.<key>.ok` | `true` if that step answered (its success rule passed) | everywhere |
 | `result.<field>` | The merged result **so far** — what the run has already found | everywhere |
 | `response.body.<path>` | THIS step's response body | `output_map.from` and `success_condition` only |
 | `response.status` | THIS step's HTTP status | `output_map.from` and `success_condition` only |
+| `response.headers.<name>` | THIS step's response headers (names lower-cased) | `output_map.from` and `success_condition` only |
 | `run.id`, `run.started_at` | Run id / ISO start time | everywhere |
 
 **Type preservation:** a template that is *exactly one* placeholder keeps the
@@ -340,6 +343,11 @@ per request), max 128 KB. Response:
                "latency_ms": 612, "skip_reason": null, "...": "..." }, ... ]
 }
 ```
+
+On a **cache hit** (`meta.cache_hit: true`) the answer comes from an earlier
+run: `meta.upstream_calls` is `0`, `meta.cost_cents` is `0` and `trace` is
+`[]`. `meta.run_id` is still present — the cache hit is logged as its own run
+and can be opened in the Runs tab.
 
 Errors: 401 bad/missing key · 400 invalid input (with per-field `details`) ·
 413 body too large · 429 rate limit (with `Retry-After`) · 503 endpoint

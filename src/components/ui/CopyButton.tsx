@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, Check } from "./Icon";
+import { focusRingCls } from "@/lib/ui";
 
 /**
  * Consolidates three near-identical copy handlers that lived in ConfigCard,
@@ -22,6 +23,15 @@ export function CopyButton({
   className?: string;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The reset is scheduled from a click, so the button can unmount (dialog
+  // closed, list refreshed) before it fires.
+  useEffect(() => {
+    return () => {
+      if (resetTimer.current) clearTimeout(resetTimer.current);
+    };
+  }, []);
 
   async function copy() {
     try {
@@ -30,7 +40,8 @@ export function CopyButton({
     } catch {
       setState("failed");
     }
-    setTimeout(() => setState("idle"), 2000);
+    if (resetTimer.current) clearTimeout(resetTimer.current);
+    resetTimer.current = setTimeout(() => setState("idle"), 2000);
   }
 
   return (
@@ -38,7 +49,9 @@ export function CopyButton({
       type="button"
       onClick={copy}
       aria-label={ariaLabel}
-      className={`text-xs transition-colors shrink-0 min-h-[44px] px-2 inline-flex items-center gap-1.5 ${
+      // min-w-[44px] as well as min-h: without a label this is an icon button,
+      // and the icon alone left the tap target at 30px wide.
+      className={`text-xs transition-colors shrink-0 min-h-[44px] min-w-[44px] px-2 inline-flex items-center justify-center gap-1.5 rounded-lg kp-press ${focusRingCls} ${
         state === "failed"
           ? "text-red-400"
           : "text-[#00C4B4] hover:text-white"

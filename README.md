@@ -48,7 +48,7 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 **Dashboard & visibility**
 - Real-time active / exhausted / cooldown counts per provider
 - Per-key request counts and status
-- Audit log — every rotation, reset, key change, and target-host change is recorded
+- Audit log — every config change, master-key rotation, key reset, key add/delete, target-host change and webhook delivery is recorded. (Pool rotation itself isn't: benching a rate-limited key happens on the request path and would write a row per throttled call.)
 - Request inspector (`/api/debug/...`) showing exactly what was sent and received. **Off unless `ENABLE_DEBUG_ROUTE=true`** — it reflects requests back to the caller, so it's a wiring-up tool, not something to leave on in production. All output is scrubbed of key values.
 
 **Key management**
@@ -73,15 +73,15 @@ One provider per upstream API. Unlimited keys per provider. Unlimited providers.
 
 **Works with any API**
 - Full HTTP passthrough: GET, POST, PUT, PATCH, DELETE
-- Forwards all headers and request body unchanged
+- Forwards the request body, path and query unchanged, and your headers with four groups stripped: hop-by-hop ones (`host`, `connection`, `keep-alive`, `te`, `trailers`, `upgrade`, `transfer-encoding`, `content-length`, `accept-encoding`, `proxy-authenticate`, `proxy-authorization`), the platform's `x-vercel-*` / `x-forwarded-*` headers, KeyProxy's own `x-master-key` / `x-endpoint-key`, and any inbound `Authorization` header — that's where the master key may have arrived, and the provider's auth header is injected from the key pool instead
 - Configurable auth header name and prefix per config (e.g. `Authorization: Bearer`, `x-api-key:`, etc.)
 - Tested against OpenAI, Anthropic, Apollo, Hunter.io, and generic REST APIs
 
 ---
 
-## Planned
+## Waterfalls (shipped)
 
-**Conditional API waterfalls** — the main line of work. One endpoint, an ordered list of steps, each calling a *different* upstream API, with rules deciding whether a step runs and whether it resolved the request. Try Prospeo, and if it returns no email try BetterEnrich, then Hunter — one URL, one response shape whichever provider answers, plus a per-provider hit rate telling you which vendor is actually earning its keep.
+**Conditional API waterfalls** are live. One endpoint, an ordered list of steps, each calling a *different* upstream API, with rules deciding whether a step runs and whether it resolved the request. Try Prospeo, and if it returns no email try BetterEnrich, then Hunter — one URL, one response shape whichever provider answers, plus a per-provider hit rate telling you which vendor is actually earning its keep. Everything below is built and deployed:
 
 - [x] Per-user ownership and key redaction
 - [x] Shared rotation engine with per-attempt timeouts
@@ -198,13 +198,19 @@ You get back the same shape whichever provider answered:
   "output": { "email": "ana@acme.com", "confidence": 0.94 },
   "raw": { "...": "the winning provider's response, untouched" },
   "resolved_by": "hunter",
-  "meta": { "duration_ms": 1840, "upstream_calls": 2, "cost_cents": 17 },
+  "missing": [],
+  "error": null,
+  "meta": { "endpoint": "find-email", "version": 4, "duration_ms": 1840,
+            "upstream_calls": 2, "cost_cents": 17, "cache_hit": false,
+            "run_id": "..." },
   "trace": [
     { "name": "Prospeo", "status": "miss", "http_status": 200, "latency_ms": 612 },
     { "name": "Hunter",  "status": "success", "http_status": 200, "latency_ms": 1180 }
   ]
 }
 ```
+
+`missing` lists required fields still empty, `error` is a human-readable failure reason or `null`. On a cache hit `meta.cache_hit` is `true`, `trace` is empty and `upstream_calls` is `0`; `meta.run_id` is still there, because the cache hit is logged as its own run.
 
 `status` is one of:
 
@@ -256,10 +262,12 @@ Point every tool in your stack at the matching KeyProxy endpoint. Add more keys 
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | Yes | Neon PostgreSQL connection string |
-| `SESSION_SECRET` | Yes | 32+ byte random hex string for signing session cookies. Rotating this logs everyone out. |
-| `ENABLE_DEBUG_ROUTE` | No | Set to `true` to enable `/api/debug/...`. Off by default — the route reflects requests and responses back to the caller. |
+| `SESSION_SECRET` | Yes | Long random string for signing session cookies — generate one with the command under [Quick deploy](#quick-deploy). Rotating this logs everyone out. |
+| `ENABLE_DEBUG_ROUTE` | No | Set to exactly `true` to enable `/api/debug/...`. Any other value (or unset) leaves the route 404ing — it reflects requests and responses back to the caller. |
 | `PROXY_ATTEMPT_TIMEOUT_MS` | No | Per-attempt upstream timeout. Defaults to `30000`. Raise it if a provider is legitimately slow. |
 | `CRON_SECRET` | No | Authorises the nightly cleanup at `/api/cron/prune`. Vercel sets this for you when you add it as a project env var. **Without it the route rejects everything** — run history and cache rows are then never pruned, so set it. |
+| `SENTRY_DSN` | No | A standard Sentry DSN. Unhandled server errors are POSTed to its envelope endpoint (no SDK, no bundle weight, inert when unset); headers, cookies, bodies and query strings are never sent. |
+| `APP_URL` / `NEXT_PUBLIC_APP_URL` | No | The app's own public URL, used to stop a provider target or webhook pointing back at KeyProxy itself. Only needed where the platform doesn't supply it — Vercel sets `VERCEL_URL` / `VERCEL_PROJECT_PRODUCTION_URL` automatically. Both names are read; set either. |
 
 ---
 
@@ -282,10 +290,11 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 | POST | `/api/configs/[id]/rotate-key` | Rotate the config's master key |
 | POST | `/api/configs/[id]/test` | Test connectivity to the target API |
 | ALL | `/api/proxy/[configId]/[...path]` | Main proxy endpoint |
-| ALL | `/api/debug/[configId]/[...path]` | Debug proxy with verbose logging |
+| POST | `/api/debug/[configId]/[...path]` | Debug proxy with verbose logging. 404s unless `ENABLE_DEBUG_ROUTE=true` |
 | GET / POST | `/api/endpoints` | List or create waterfall endpoints |
 | GET / PATCH / DELETE | `/api/endpoints/[id]` | Get, update settings, or delete |
 | PUT | `/api/endpoints/[id]/definition` | Save a new version of the waterfall |
+| GET / POST | `/api/endpoints/[id]/versions` | List saved versions, or restore one (copied forward as a new version) |
 | GET / POST | `/api/endpoints/[id]/keys` | List or issue endpoint keys |
 | DELETE | `/api/endpoints/[id]/keys/[keyId]` | Revoke an endpoint key |
 | POST | `/api/endpoints/[id]/test` | Run an unsaved draft; nothing is persisted |
@@ -318,15 +327,35 @@ Fresh deploy → visit the app → you're redirected to `/setup`. Create your ad
 
 ## Database schema
 
-**proxy_configs** — `id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes[], cooldown_minutes, master_key, owner_user_id, created_at`
+Proxy side:
 
-On first run after upgrading, `owner_user_id` is added and any existing providers are adopted by the oldest admin account, so nobody is locked out of their own key pools.
+**proxy_configs** — `id, name, target_base_url, auth_header_name, auth_header_prefix, rate_limit_codes[], cooldown_minutes, master_key, owner_user_id, webhook_url, created_at`
+
+On first run after upgrading, `owner_user_id` is added and any existing providers are adopted by the oldest admin account, so nobody is locked out of their own key pools. `webhook_url` is the optional pool-exhaustion webhook.
 
 **api_keys** — `id, config_id, key_value, order_index, status (active|exhausted|cooldown), exhausted_at, request_count, created_at`
 
 **audit_log** — `id, config_id, action, detail, created_at`
 
 **users** — `id, email, password_hash, name, is_admin, created_at, updated_at`
+
+Endpoint (waterfall) side:
+
+**endpoints** — `id, name, slug, description, owner_user_id, active_version_id, revision, enabled, cache_enabled, cache_ttl_seconds, run_deadline_ms, rate_limit_per_minute, log_retention_days, log_bodies, created_at, updated_at`
+
+**endpoint_versions** — `id, endpoint_id, version_no, definition (JSONB), note, created_at`. Immutable: every save appends, restores copy forward.
+
+**endpoint_keys** — `id, endpoint_id, key_id, key_hash, label, last_used_at, revoked_at, created_at`. Only the SHA-256 hash is stored.
+
+**endpoint_runs** — `id, endpoint_id, version_id, status, resolved_by, cache_hit, upstream_calls, cost_cents, duration_ms, input, output, error, created_at`. `output` is written only when the endpoint has body logging on.
+
+**endpoint_run_steps** — `id, run_id, step_key, step_index, group_id, config_id, config_name, status, skip_reason, http_status, latency_ms, attempts, keys_exhausted, cost_cents, trace, created_at`. `config_id` is deliberately not a foreign key, so deleting a provider doesn't erase its history.
+
+**endpoint_cache** — `cache_key, endpoint_id, version_id, result, run_id, hit_count, expires_at, created_at`. The key hashes owner + endpoint + version + input.
+
+**endpoint_rate_counters** — `key_record_id, window_start, count`. Per-key per-minute run limit, counted in the database so it holds across instances.
+
+The endpoint tables are created behind a Postgres advisory lock, because `CREATE TABLE IF NOT EXISTS` is not race-free across two concurrent cold starts.
 
 ---
 
@@ -335,6 +364,7 @@ On first run after upgrading, `owner_user_id` is added and any existing provider
 ```
 src/
 ├── middleware.ts                             # Session-cookie auth gate
+├── instrumentation.ts                        # onRequestError → Sentry envelope
 ├── app/
 │   ├── page.tsx                              # Dashboard — all configs
 │   ├── login/page.tsx                        # Login
@@ -342,29 +372,39 @@ src/
 │   ├── admin/users/page.tsx                  # User management (admin)
 │   ├── configs/new/page.tsx                  # Create config
 │   ├── configs/[id]/page.tsx                 # Manage keys + settings
+│   ├── endpoints/page.tsx                    # Waterfall endpoints list
+│   ├── endpoints/new/page.tsx                # Create endpoint
+│   ├── endpoints/[id]/page.tsx               # Build tab (visual + JSON)
+│   ├── endpoints/[id]/runs/                  # Run list + run detail
+│   ├── endpoints/[id]/settings/page.tsx      # Settings, keys, versions, cache
 │   └── api/
 │       ├── proxy/[configId]/[...path]/       # Main proxy endpoint
 │       ├── debug/[configId]/[...path]/       # Debug proxy
-│       ├── configs/                          # Config CRUD
+│       ├── configs/                          # Config CRUD, keys, reset, rotate, test
+│       ├── endpoints/                        # Endpoint CRUD, definition, versions,
+│       │                                     #   keys, test run, cache
+│       ├── run/[endpointId]/                 # Public waterfall execution
+│       ├── cron/prune/                       # Nightly retention + cache cleanup
 │       ├── auth/                             # login, logout, me, setup
 │       ├── users/                            # User management
 │       └── health/                           # Health check
 ├── components/
-│   ├── ConfigCard.tsx
-│   ├── KeysTable.tsx
-│   ├── AddKeysForm.tsx
-│   ├── EditConfigForm.tsx
-│   ├── MasterKeyDisplay.tsx
-│   ├── CurlExample.tsx
-│   ├── StatsBar.tsx
-│   ├── AuditLog.tsx
-│   ├── LoginForm.tsx
-│   ├── SetupForm.tsx
-│   ├── UserMenu.tsx
-│   └── UsersManager.tsx
+│   ├── ConfigCard.tsx, KeysTable.tsx, AddKeysForm.tsx, EditConfigForm.tsx,
+│   │   MasterKeyDisplay.tsx, CurlExample.tsx, StatsBar.tsx, AuditLog.tsx,
+│   │   TestConnectionButton.tsx              # Provider surfaces
+│   ├── EndpointsTable.tsx, EndpointUrlBar.tsx, EndpointKeysManager.tsx,
+│   │   EndpointSettingsForm.tsx, EndpointDangerZone.tsx, VersionHistory.tsx,
+│   │   CachePanel.tsx, RunsTable.tsx, RunStatusFilter.tsx,
+│   │   ProviderPerformance.tsx               # Endpoint surfaces
+│   ├── LoginForm.tsx, SetupForm.tsx, UserMenu.tsx, UsersManager.tsx,
+│   │   HeaderNav.tsx, ConfirmModal.tsx       # Auth, users, chrome
+│   ├── builder/                              # Visual step builder: EndpointBuilder,
+│   │                                         #   StepCard, ConditionEditor, MappingTable,
+│   │                                         #   TokenInput, JsonView, TestRunPanel…
 │   └── ui/                                   # Shared primitives: Select, Field,
 │                                             #   Icon, Toggle, Tabs, Pagination,
-│                                             #   StatTile, CodeBlock, Skeleton…
+│                                             #   StatTile, CodeBlock, Skeleton,
+│                                             #   Popover, TooltipLayer, SortableTh…
 └── lib/
     ├── db.ts                                 # Neon DB + schema init
     ├── usersDb.ts                            # User CRUD
@@ -373,12 +413,32 @@ src/
     ├── passwords.ts                          # scrypt hashing
     ├── rotation.ts                           # Key-rotation engine
     ├── proxy.ts                              # Pass-through adapter over rotation
+    ├── runner.ts                             # Rotation adapter the executor calls
+    ├── exhaustionWebhook.ts                  # Pool-exhausted notification
+    ├── rateLimit.ts                          # In-process limiter for the dashboard
     ├── validation.ts                         # URL/egress guards
     ├── redact.ts                             # Secret scrubbing
+    ├── log.ts                                # Structured one-line JSON events
+    ├── endpointSchema.sql.ts                 # Endpoint-side DDL (advisory-locked)
+    ├── endpointsDb.ts                        # Endpoint + version CRUD
+    ├── endpointKeys.ts                       # Issue/verify hashed endpoint keys
+    ├── endpointKeyFormat.ts                  # kp_ep_<id>_<secret> parsing
+    ├── endpointGuards.ts                     # Ownership + access checks
+    ├── endpointTypes.ts                      # Definition/endpoint interfaces
+    ├── runLog.ts                             # Allowlisted run + step history
+    ├── runCache.ts                           # Result cache read/write/prune
+    ├── runAnalytics.ts                       # Hit rate, share of answers, cost
+    ├── runStatus.ts                          # Status lifecycle helpers
+    ├── slug.ts                               # Endpoint slug rules
+    ├── format.ts                             # Shared display formatting
+    ├── engine/                               # Pure, DB-free waterfall engine:
+    │                                         #   template, paths, rules, mapping,
+    │                                         #   request, execute, validate,
+    │                                         #   cacheKey, input, tokens, describe
     ├── ui.ts                                 # Shared class strings
     └── types.ts                              # TypeScript interfaces
 ```
 
 **Rotation logic:** pick lowest `order_index` active key → forward request → if the response code is in `rate_limit_codes`, mark that key exhausted, exclude it for the rest of this request, and retry with the next → return 503 only when every key is simultaneously exhausted. Each attempt has its own timeout, and the whole loop respects an optional deadline.
 
-`rotation.ts` returns the upstream response **unconsumed** along with which key was used, how many attempts it took, and how many keys were burned. That is what lets the pass-through proxy stream the body straight back while the (in-progress) waterfall executor reads and inspects it.
+`rotation.ts` returns the upstream response **unconsumed** along with which key was used, how many attempts it took, and how many keys were burned. That is what lets the pass-through proxy stream the body straight back while the waterfall executor reads and inspects it.

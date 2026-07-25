@@ -154,15 +154,34 @@ function toISO(value: unknown): string {
  * `status` orders by lifecycle severity, not alphabetically — "Answered,
  * error, miss, partial" is an alphabetised list, not an ordering anyone means.
  */
-export const RUN_SORTS: Record<string, string> = {
-  when: "r.created_at",
-  resolved_by: "resolved_by_name",
-  calls: "r.upstream_calls",
-  time: "r.duration_ms",
-  status: `CASE r.status
+/*
+ * Null-prototype on purpose.
+ *
+ * As a plain object literal this map inherited Object.prototype, so
+ * `"constructor" in RUN_SORTS` was true and `RUN_SORTS["constructor"]`
+ * returned a function — truthy, so the `?? RUN_SORTS.when` fallback never
+ * fired and a native-code toString landed in the ORDER BY, breaking the page.
+ * The interpolated text was always fixed JS source rather than caller input,
+ * so this was never injection, but an allowlist that answers to keys nobody
+ * put in it is not an allowlist. `isRunSort` below is the only way in.
+ */
+export const RUN_SORTS: Record<string, string> = Object.assign(
+  Object.create(null) as Record<string, string>,
+  {
+    when: "r.created_at",
+    resolved_by: "resolved_by_name",
+    calls: "r.upstream_calls",
+    time: "r.duration_ms",
+    status: `CASE r.status
     WHEN 'success' THEN 0 WHEN 'partial' THEN 1
     WHEN 'miss' THEN 2 WHEN 'error' THEN 3 ELSE 4 END`,
-};
+  }
+);
+
+/** The only sanctioned way to test a caller-supplied sort key. */
+export function isRunSort(value: unknown): value is keyof typeof RUN_SORTS {
+  return typeof value === "string" && Object.hasOwn(RUN_SORTS, value);
+}
 
 export async function listRuns(
   endpointId: string,
@@ -177,7 +196,7 @@ export async function listRuns(
   const sql = getSQL();
   const status = options.status && options.status !== "all" ? options.status : null;
 
-  const sortExpr = RUN_SORTS[options.sort ?? ""] ?? RUN_SORTS.when;
+  const sortExpr = isRunSort(options.sort) ? RUN_SORTS[options.sort] : RUN_SORTS.when;
   const dir = options.dir === "asc" ? "ASC" : "DESC";
 
   // The driver is tagged-template only, so the ORDER BY is spliced by
@@ -196,7 +215,7 @@ export async function listRuns(
         AND (`,
     `::text IS NULL OR r.status = `,
     `)
-      ORDER BY ${sortExpr} ${dir} NULLS LAST, r.created_at DESC
+      ORDER BY ${sortExpr} ${dir} NULLS LAST, r.created_at DESC, r.id DESC
       LIMIT `,
     ` OFFSET `,
     ``,

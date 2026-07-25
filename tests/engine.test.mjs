@@ -16,6 +16,7 @@ import { validateEndpointDefinition } from "../.engine-build/engine/validate.js"
 import { runEndpoint } from "../.engine-build/engine/execute.js";
 import { validateRunInput } from "../.engine-build/engine/input.js";
 import { canonicalizeInput, cacheKeyMaterial } from "../.engine-build/engine/cacheKey.js";
+import { parseCsv, extractKeysFromCsv } from "../.engine-build/csvKeys.js";
 
 let pass = 0;
 const failures = [];
@@ -679,6 +680,131 @@ ok("editing the waterfall invalidates on its own",
   cacheKeyMaterial({ ownerId: "u1", endpointId: "e", versionId: "v1", input: { d: "x" } }) !==
   cacheKeyMaterial({ ownerId: "u1", endpointId: "e", versionId: "v2", input: { d: "x" } }),
   "the version is in the key, so there is nothing to remember to purge");
+
+// ---------------------------------------------------------------------------
+// CSV key import
+//
+// A column label imported as a key is not cosmetic: it takes order_index 1 on
+// a fresh pool, getActiveKey selects the lowest order_index, and the 401 a bad
+// key returns is not a rate-limit code — so rotation never benches it and
+// every request through that provider fails until a human deletes it.
+// ---------------------------------------------------------------------------
+
+check("single-column export drops its header row",
+  extractKeysFromCsv("api_key\nsk-live-1\nsk-live-2"),
+  ["sk-live-1", "sk-live-2"]);
+
+check("header-only file yields nothing, so the caller can say 'no keys found'",
+  extractKeysFromCsv("api_key"), []);
+
+check("single column with no header keeps every row",
+  extractKeysFromCsv("sk-live-1\nsk-live-2"),
+  ["sk-live-1", "sk-live-2"]);
+
+check("named header column wins over the length heuristic",
+  extractKeysFromCsv("name,api_key\nalpha,sk-aaaa1111bbbb2222\nbeta,sk-cccc3333dddd4444"),
+  ["sk-aaaa1111bbbb2222", "sk-cccc3333dddd4444"]);
+
+check("a quoted embedded comma stays inside one key",
+  extractKeysFromCsv('name,api_key\na,"sk-aaa,bbb"'),
+  ["sk-aaa,bbb"]);
+
+check("doubled quotes unescape to one quote",
+  parseCsv('a,"say ""hi"""')[0],
+  ["a", 'say "hi"']);
+
+check("CRLF line endings parse the same as LF",
+  extractKeysFromCsv("api_key\r\nsk-one\r\nsk-two"),
+  ["sk-one", "sk-two"]);
+
+check("blank lines are dropped, not imported as empty keys",
+  extractKeysFromCsv("api_key\nsk-one\n\n\nsk-two\n"),
+  ["sk-one", "sk-two"]);
+
+check("empty input yields no keys", extractKeysFromCsv(""), []);
+
+check("with no named header the longest-average column is the key column",
+  extractKeysFromCsv("alpha,2026-01-01,sk-aaaaaaaaaaaaaaaaaaaa\nbeta,2026-02-02,sk-bbbbbbbbbbbbbbbbbbbb"),
+  ["sk-aaaaaaaaaaaaaaaaaaaa", "sk-bbbbbbbbbbbbbbbbbbbb"]);
+
+// ---------------------------------------------------------------------------
+// Validator: rules the published spec promises are enforced
+// ---------------------------------------------------------------------------
+
+function defWithStep(overrides) {
+  return {
+    version: 1,
+    inputs: [{ name: "domain", type: "string", required: true }],
+    steps: [
+      {
+        key: "one",
+        name: "One",
+        config_id: "cfg-1",
+        group: null,
+        enabled: true,
+        request: {
+          method: "GET",
+          path: "/find",
+          query: [],
+          headers: [],
+          body_type: "none",
+          body: null,
+        },
+        run_condition: null,
+        success_condition: null,
+        output_map: [{ field: "email", from: "{{response.body.email}}", transform: "none" }],
+        on_success: "stop",
+        on_failure: "continue",
+        timeout_ms: null,
+        max_key_attempts: null,
+        cost_per_call_cents: null,
+        ...overrides,
+      },
+    ],
+    outputs: [{ field: "email" }],
+    settings: { required_outputs: ["email"] },
+  };
+}
+
+ok("a response.* reference in an output field is valid",
+  validateEndpointDefinition(defWithStep({})).ok,
+  "this is the documented home for response.*");
+
+ok("response.* in a query parameter is rejected at save time",
+  !validateEndpointDefinition(
+    defWithStep({
+      request: {
+        method: "GET",
+        path: "/find",
+        query: [{ key: "x", value: "{{response.body.id}}" }],
+        headers: [],
+        body_type: "none",
+        body: null,
+      },
+    })
+  ).ok,
+  "the step's own response does not exist while its request is being built, and it used to save then silently resolve to nothing");
+
+ok("response.* in a run condition is rejected at save time",
+  !validateEndpointDefinition(
+    defWithStep({ run_condition: { path: "response.status", op: "eq", value: 200 } })
+  ).ok,
+  "a run condition is evaluated before the call");
+
+ok("response.* in a success condition is accepted",
+  validateEndpointDefinition(
+    defWithStep({ success_condition: { path: "response.status", op: "eq", value: 200 } })
+  ).ok);
+
+for (const blocked of ["__proto__", "constructor", "prototype"]) {
+  ok(`an output field named ${blocked} is rejected`,
+    !validateEndpointDefinition(
+      defWithStep({
+        output_map: [{ field: blocked, from: "{{response.body.x}}", transform: "none" }],
+      })
+    ).ok,
+    "the mapper refuses to write it, so accepting it would produce a field that never appears");
+}
 
 console.log(`\n  passed: ${pass}`);
 if (failures.length) {

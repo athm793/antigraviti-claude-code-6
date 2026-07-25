@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ConfigWithStats } from "@/lib/types";
 import type { StepDef, HttpMethod, BodyType } from "@/lib/endpointTypes";
 import { HTTP_METHODS } from "@/lib/endpointTypes";
@@ -564,8 +564,28 @@ function JsonBodyEditor({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const [text, setText] = useState(() => JSON.stringify(value ?? {}, null, 2));
+  const serialised = useMemo(() => JSON.stringify(value ?? {}, null, 2), [value]);
+  const [text, setText] = useState(serialised);
   const [error, setError] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  /** The last shape this editor is responsible for, so an echo isn't a change. */
+  const lastCommitted = useRef(serialised);
+
+  /**
+   * Re-seed when the body changes underneath.
+   *
+   * Applying JSON in the JSON view rewrites a step without remounting its
+   * card, and seeding only on mount meant the next blur committed the text
+   * from before that change and quietly put the old body back. Never over
+   * what someone is in the middle of typing, though.
+   */
+  useEffect(() => {
+    if (serialised === lastCommitted.current) return;
+    lastCommitted.current = serialised;
+    if (document.activeElement === textareaRef.current) return;
+    setText(serialised);
+    setError("");
+  }, [serialised]);
 
   function commit() {
     try {
@@ -575,6 +595,9 @@ function JsonBodyEditor({
         return;
       }
       setError("");
+      // Claim the value coming back so the re-seed above leaves the text as
+      // typed instead of reformatting it under the cursor.
+      lastCommitted.current = JSON.stringify(parsed, null, 2);
       onChange(parsed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That isn't valid JSON");
@@ -584,6 +607,7 @@ function JsonBodyEditor({
   return (
     <div className="flex flex-col gap-1.5">
       <textarea
+        ref={textareaRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onBlur={commit}

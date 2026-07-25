@@ -18,7 +18,13 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /*
+   * The root layout loads Geist and exposes it as --font-geist-sans; naming a
+   * hardcoded family here would silently beat it on every element, which is
+   * exactly what used to happen. Generic families stay behind it as the
+   * fallback for the window before the webfont resolves.
+   */
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
   /*
    * Fixed-width digits everywhere, set once at the root. Counts, dates,
    * latencies and costs change constantly in this UI, and proportional

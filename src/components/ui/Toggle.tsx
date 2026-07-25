@@ -1,5 +1,7 @@
 "use client";
 
+import { focusRingCls } from "@/lib/ui";
+
 export function Toggle({
   checked,
   onChange,
@@ -20,7 +22,7 @@ export function Toggle({
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className="min-w-[44px] min-h-[44px] flex items-center justify-center shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+      className={`min-w-[44px] min-h-[44px] flex items-center justify-center shrink-0 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed kp-press ${focusRingCls}`}
     >
       <span
         className={`w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${

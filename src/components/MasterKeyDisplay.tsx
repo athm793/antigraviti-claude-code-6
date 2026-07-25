@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ConfirmModal } from "./ConfirmModal";
 import { CopyButton } from "./ui/CopyButton";
 import { Eye, EyeOff, RefreshCw, Spinner } from "./ui/Icon";
-import { metaLabelCls } from "@/lib/ui";
+import { cardCls, metaLabelCls } from "@/lib/ui";
 
 export function MasterKeyDisplay({
   configId,
@@ -44,7 +44,7 @@ export function MasterKeyDisplay({
     "text-xs transition-colors px-3 min-h-[44px] rounded border inline-flex items-center gap-1.5";
 
   return (
-    <div className="bg-[#111118] border border-[#2a2a38] rounded-xl p-5 flex flex-col gap-3">
+    <div className={cardCls}>
       <div className="flex items-center justify-between gap-3">
         <span className={metaLabelCls}>Master key</span>
         <span className="text-xs text-[#8b8b9e]">

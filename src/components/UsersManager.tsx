@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ConfirmModal } from "./ConfirmModal";
 import type { User } from "@/lib/types";
@@ -231,8 +231,18 @@ function UserRow({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
+  const successTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  async function patch(body: Record<string, unknown>) {
+  // The confirmation is dismissed on a timer started from a click, so the row
+  // can be gone (user deleted, list refreshed) before it fires.
+  useEffect(() => {
+    return () => {
+      if (successTimer.current) clearTimeout(successTimer.current);
+    };
+  }, []);
+
+  /** Resolves true only when the change actually landed. */
+  async function patch(body: Record<string, unknown>): Promise<boolean> {
     onError("");
     setBusy(true);
     try {
@@ -244,12 +254,14 @@ function UserRow({
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         onError(data.error ?? "Failed to update user");
-        return;
+        return false;
       }
       const updated = await res.json();
       onUpdated(updated);
+      return true;
     } catch {
       onError("Network error — check your connection and try again");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -261,11 +273,14 @@ function UserRow({
       onError("Password must be at least 8 characters");
       return;
     }
-    await patch({ password: newPassword });
+    // Only confirm on a real success: an admin who reads "Password reset"
+    // after a failed request hands out a password that was never set.
+    if (!(await patch({ password: newPassword }))) return;
     setNewPassword("");
     setResetOpen(false);
     setResetSuccess(true);
-    setTimeout(() => setResetSuccess(false), 4000);
+    if (successTimer.current) clearTimeout(successTimer.current);
+    successTimer.current = setTimeout(() => setResetSuccess(false), 4000);
   }
 
   async function handleToggleAdmin() {

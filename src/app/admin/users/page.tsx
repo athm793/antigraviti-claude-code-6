@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { listUsers } from "@/lib/usersDb";
 import { UsersManager } from "@/components/UsersManager";
+import { ArrowLeft } from "@/components/ui/Icon";
+import { backLinkCls } from "@/lib/ui";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +17,9 @@ export default async function AdminUsersPage() {
   return (
     <div className="max-w-3xl mx-auto flex flex-col gap-8">
       <div>
-        <a href="/" className="text-[#8b8b9e] hover:text-white text-sm transition-colors min-h-[44px] inline-flex items-center">
-          ← Back
+        <a href="/" className={backLinkCls}>
+          <ArrowLeft className="w-4 h-4" />
+          Back
         </a>
         <h1 className="text-2xl font-bold text-white mt-3">Manage Users</h1>
         <p className="text-[#8b8b9e] text-sm mt-1 leading-relaxed">

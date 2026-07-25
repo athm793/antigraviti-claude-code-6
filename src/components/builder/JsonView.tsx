@@ -106,6 +106,13 @@ export function JsonView({
 
     setIssues(result.issues.filter((i) => i.severity === "warning"));
     setStale(false);
+    // Claim the re-seed this is about to cause. The parent stores `result.value`
+    // verbatim, so this is exactly what `serialised` becomes on the next render;
+    // without it the effect below sees text it didn't seed and calls the
+    // builder's own apply an outside change, flagging it as out of date.
+    const normalised = JSON.stringify(result.value, null, 2);
+    lastSeeded.current = normalised;
+    setText(normalised);
     onApply(result.value);
     setApplied(true);
   }

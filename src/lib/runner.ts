@@ -84,11 +84,16 @@ export async function loadProviders(
  * These never leave this module — they exist only to be *removed* from output.
  */
 async function collectSecrets(configs: Iterable<ProxyConfig>): Promise<string[]> {
+  const list = [...configs];
+  // Concurrent, not serial. Each listKeys is its own HTTP round trip on the
+  // Neon driver, and this sits on the awaited path of every run — a serial
+  // loop charged the caller one round trip per provider for work that has no
+  // ordering between providers. loadProviders above already does it this way.
+  const pools = await Promise.all(list.map((config) => listKeys(config.id)));
   const secrets: string[] = [];
-  for (const config of configs) {
-    secrets.push(config.master_key);
-    const keys = await listKeys(config.id);
-    for (const key of keys) secrets.push(key.key_value);
+  for (const config of list) secrets.push(config.master_key);
+  for (const pool of pools) {
+    for (const key of pool) secrets.push(key.key_value);
   }
   return secrets;
 }

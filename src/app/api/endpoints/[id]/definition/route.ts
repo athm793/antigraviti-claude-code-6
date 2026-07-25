@@ -35,10 +35,19 @@ export async function PUT(
       return Response.json({ error: "No definition supplied" }, { status: 400 });
     }
 
-    const expected = Number(body.expected_revision ?? auth.endpoint.revision);
-    if (!Number.isInteger(expected)) {
-      return Response.json({ error: "Invalid revision" }, { status: 400 });
+    // Required, never defaulted.
+    //
+    // Falling back to `auth.endpoint.revision` defaulted the lock to the row
+    // this request had just read, so the WHERE clause always matched and any
+    // client that omitted the field won every conflict silently. An optimistic
+    // lock the caller can opt out of by saying nothing is not a lock.
+    if (!Number.isInteger(body.expected_revision)) {
+      return Response.json(
+        { error: "expected_revision is required" },
+        { status: 400 }
+      );
     }
+    const expected = Number(body.expected_revision);
 
     // The same validator the builder runs against every keystroke. Sharing it
     // is the point: if the server accepted things the UI refuses (or the

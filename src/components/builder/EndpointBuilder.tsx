@@ -49,6 +49,9 @@ export function EndpointBuilder({
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  /** A save lost the optimistic lock. Cleared by editing or by taking their version. */
+  const [conflict, setConflict] = useState(false);
+  const [reloading, setReloading] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<StepDef | null>(null);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
@@ -96,6 +99,7 @@ export function EndpointBuilder({
     setDefinition(next);
     setDirty(true);
     setSaveError("");
+    setConflict(false);
     // Any edit makes the last test result stale, and a stale badge on a step
     // card is worse than no badge — it reads as "this still works".
     setLastRun(null);
@@ -186,20 +190,61 @@ export function EndpointBuilder({
       if (!res.ok) {
         const data = await res.json().catch(() => null);
         setSaveError(data?.error ?? "Failed to save");
-        // A conflict hands back the current revision so the message stays
-        // accurate if they reload and try again.
-        if (typeof data?.revision === "number") setRevision(data.revision);
+        // Deliberately keep the stale revision. Adopting the one the server
+        // hands back would make the next click sail past the lock and quietly
+        // overwrite the save that just landed, so the only ways out are to
+        // take their version or to reload the page.
+        if (res.status === 409) setConflict(true);
         return;
       }
 
       const data = await res.json();
+      // Only a save that actually landed moves the revision on.
       setRevision(data.revision);
       setDirty(false);
+      setConflict(false);
       router.refresh();
     } catch {
       setSaveError("Network error — check your connection and try again");
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * The way out of a conflict.
+   *
+   * Pulls the version that won and starts again from it. That discards this
+   * draft, which is why it is a button they press rather than something that
+   * happens to them — but without it a conflict is a dead end, since the lock
+   * deliberately refuses every further save from this stale revision.
+   */
+  async function reloadTheirVersion() {
+    setReloading(true);
+    try {
+      const res = await fetch(`/api/endpoints/${endpoint.id}`);
+      if (!res.ok) {
+        setSaveError("Couldn't load their version — reload the page to see it");
+        return;
+      }
+      const data = await res.json();
+      // Without both of these the lock would be left pointing at nothing, so
+      // stay in the conflict rather than guess.
+      if (typeof data?.revision !== "number" || !data?.definition) {
+        setSaveError("Couldn't load their version — reload the page to see it");
+        return;
+      }
+      setDefinition(data.definition);
+      setRevision(data.revision);
+      setDirty(false);
+      setConflict(false);
+      setSaveError("");
+      setLastRun(null);
+      router.refresh();
+    } catch {
+      setSaveError("Network error — check your connection and try again");
+    } finally {
+      setReloading(false);
     }
   }
 
@@ -361,13 +406,19 @@ export function EndpointBuilder({
         {/* Tip on a wrapper — a disabled button swallows the tooltip's mouse
             events, and disabled is exactly when the reason matters. */}
         <span
-          data-tip={errorCount > 0 ? "Fix the highlighted problems first" : undefined}
+          data-tip={
+            errorCount > 0
+              ? "Fix the highlighted problems first"
+              : conflict
+                ? "Someone else saved first — take their version before saving again"
+                : undefined
+          }
           className="inline-flex"
         >
           <button
             type="button"
             onClick={save}
-            disabled={saving || !dirty || errorCount > 0}
+            disabled={saving || !dirty || errorCount > 0 || conflict}
             className={`${btnPrimary} gap-2 min-w-[9.5rem]`}
           >
             {saving && <Spinner className="w-4 h-4" />}
@@ -376,7 +427,28 @@ export function EndpointBuilder({
         </span>
       </div>
 
-      {saveError && <p className={errorBoxCls}>{saveError}</p>}
+      {saveError && (
+        <div className={`${errorBoxCls} flex flex-wrap items-center justify-between gap-3`}>
+          <span className="min-w-0">{saveError}</span>
+          {conflict && (
+            <button
+              type="button"
+              onClick={reloadTheirVersion}
+              disabled={reloading}
+              className={`${btnSecondary} gap-2 shrink-0`}
+            >
+              {reloading && <Spinner className="w-4 h-4" />}
+              {reloading ? "Loading…" : "Reload their version"}
+            </button>
+          )}
+        </div>
+      )}
+      {conflict && (
+        <p className={hintCls}>
+          Saving is blocked until you take their version, so this draft can&apos;t overwrite it.
+          Copy anything you need out of the JSON view first — reloading replaces it.
+        </p>
+      )}
 
       {/*
         Both views stay mounted and one is hidden, rather than swapping them.

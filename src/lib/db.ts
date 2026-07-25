@@ -20,13 +20,54 @@ export function getSQL(): NeonQueryFunction<false, false> {
   return neon(process.env.DATABASE_URL);
 }
 
-// Cached per warm serverless instance so we don't run 4 DDL statements on
-// every request — schema only needs to be ensured once per cold start.
+// Cached per warm serverless instance so we don't run the DDL on every
+// request — schema only needs to be ensured once per cold start.
 let schemaInitialized = false;
+/**
+ * The in-flight init, so N concurrent requests arriving on one cold instance
+ * share a single run instead of each firing the whole DDL. A boolean alone
+ * only closes the window *after* the first init resolves.
+ */
+let schemaInitInFlight: Promise<void> | null = null;
 
 export async function initSchema(): Promise<void> {
   if (schemaInitialized) return;
+  if (schemaInitInFlight) return schemaInitInFlight;
+  schemaInitInFlight = runInitSchema()
+    .then(() => {
+      schemaInitialized = true;
+    })
+    .finally(() => {
+      schemaInitInFlight = null;
+    });
+  return schemaInitInFlight;
+}
+
+async function runInitSchema(): Promise<void> {
   const sql = getSQL();
+  /*
+   * Serialize the whole init, not just half of it.
+   *
+   * CREATE TABLE IF NOT EXISTS is not race-free in Postgres — two concurrent
+   * cold starts can collide with a duplicate-key error on the system
+   * catalogue. The endpoint DDL has always been protected by this advisory
+   * lock; the core tables below were not, despite carrying exactly the same
+   * hazard. Taking the lock here covers both halves.
+   *
+   * This is a session-level lock rather than the xact-level one used inside
+   * the batched endpoint transaction, because these statements are sent
+   * individually. It is released explicitly in the finally block.
+   */
+  await sql`SELECT pg_advisory_lock(hashtext('keyproxy_schema'))`;
+  try {
+    await initCoreSchema(sql);
+    await initEndpointSchema(sql);
+  } finally {
+    await sql`SELECT pg_advisory_unlock(hashtext('keyproxy_schema'))`;
+  }
+}
+
+async function initCoreSchema(sql: NeonQueryFunction<false, false>): Promise<void> {
   // users is created first because proxy_configs.owner_user_id references it.
   await sql`
     CREATE TABLE IF NOT EXISTS users (
@@ -66,6 +107,18 @@ export async function initSchema(): Promise<void> {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_api_keys_config_status ON api_keys(config_id, status, order_index)`;
+  // The "duplicates skipped" promise needs an actual constraint behind it —
+  // insertKeys relies on this index for its ON CONFLICT. Deduplicate any rows
+  // an earlier build already let through, keeping the lowest id, before the
+  // unique index can be created.
+  await sql`
+    DELETE FROM api_keys a
+    USING api_keys b
+    WHERE a.config_id = b.config_id
+      AND a.key_value = b.key_value
+      AND a.id > b.id
+  `;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_config_value ON api_keys(config_id, key_value)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_master_key ON proxy_configs(master_key)`;
   await sql`
     CREATE TABLE IF NOT EXISTS audit_log (
@@ -78,26 +131,44 @@ export async function initSchema(): Promise<void> {
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_audit_log_config_created ON audit_log(config_id, created_at DESC)`;
 
-  // Migration for deployments created before configs had owners. Existing
-  // configs are adopted by the oldest admin so nobody is locked out of their
-  // own key pools; new configs get an owner at creation time.
   await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL`;
+  /*
+   * One-time adoption of pre-ownership configs, and only that.
+   *
+   * This used to run unconditionally on every cold start, which quietly
+   * turned a migration into a policy: deleting a user NULLs their configs'
+   * owner (ON DELETE SET NULL), so the next cold start handed those key pools
+   * to the oldest admin. That is not an access escalation — admins can reach
+   * every config anyway — but it silently rewrites ownership records forever
+   * and re-scans the table on every cold start.
+   *
+   * The marker row makes it what it claims to be: a migration that has run.
+   */
   await sql`
-    UPDATE proxy_configs SET owner_user_id = (
-      SELECT id FROM users WHERE is_admin = true ORDER BY created_at ASC LIMIT 1
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name       TEXT        PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
-    WHERE owner_user_id IS NULL
   `;
+  const adoption = await sql`
+    INSERT INTO schema_migrations (name) VALUES ('adopt_ownerless_configs')
+    ON CONFLICT (name) DO NOTHING
+    RETURNING name
+  `;
+  if (adoption.length > 0) {
+    await sql`
+      UPDATE proxy_configs SET owner_user_id = (
+        SELECT id FROM users WHERE is_admin = true ORDER BY created_at ASC LIMIT 1
+      )
+      WHERE owner_user_id IS NULL
+    `;
+  }
   await sql`CREATE INDEX IF NOT EXISTS idx_proxy_configs_owner ON proxy_configs(owner_user_id)`;
 
   // Optional exhaustion webhook: where to POST when every key in the pool is
   // simultaneously exhausted, and when we last did (the debounce marker).
   await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS webhook_url TEXT`;
   await sql`ALTER TABLE proxy_configs ADD COLUMN IF NOT EXISTS webhook_notified_at TIMESTAMPTZ`;
-
-  await initEndpointSchema(sql);
-
-  schemaInitialized = true;
 }
 
 /**
@@ -375,6 +446,22 @@ export async function resetCooldownKeys(
   cooldownMinutes: number
 ): Promise<number> {
   const sql = getSQL();
+  // Turning cooldown off must not strand the keys that are already resting.
+  //
+  // markKeyExhausted picks 'cooldown' or 'exhausted' from the setting at the
+  // time it runs, and this recovery only ever matched 'cooldown'. So editing
+  // a provider from a positive cooldown to 0 left every resting key parked
+  // forever, silently shrinking the pool until someone noticed and pressed
+  // "Reset all keys". Release them on the way past instead.
+  if (cooldownMinutes <= 0) {
+    const released = await sql`
+      UPDATE api_keys
+      SET status = 'active', exhausted_at = NULL
+      WHERE config_id = ${configId} AND status = 'cooldown'
+      RETURNING id
+    `;
+    return released.length;
+  }
   // RETURNING is what makes the count real. Without it the Neon HTTP driver
   // hands back an empty array for an UPDATE, so this reported 0 every time
   // regardless of how many keys it actually reactivated.
@@ -438,34 +525,45 @@ export async function insertKeys(
     }
   }
 
-  const existingRows = await sql`
-    SELECT key_value FROM api_keys WHERE config_id = ${configId}
-  `;
-  const existingSet = new Set(existingRows.map((r) => r.key_value as string));
-
-  const newKeys = deduped.filter((k) => !existingSet.has(k));
-  const skipped = keyValues.length - newKeys.length;
-
-  if (newKeys.length === 0) return { inserted: 0, skipped };
-
-  const maxResult = await sql`
-    SELECT COALESCE(MAX(order_index), 0) AS max_idx FROM api_keys WHERE config_id = ${configId}
-  `;
-  const startIdx = (maxResult[0].max_idx as number) + 1;
-  const orderIndexes = newKeys.map((_, i) => startIdx + i);
-
-  await sql`
+  /*
+   * One statement, and the database decides what is a duplicate.
+   *
+   * This used to be SELECT-existing, filter in JS, SELECT MAX(order_index),
+   * then INSERT — a check-then-act with no constraint behind it, so two
+   * concurrent pastes (a double-clicked Add, two tabs, a retried request)
+   * both read the pre-insert snapshot and both inserted. That produced a
+   * genuinely duplicated key in the pool and a "0 duplicates skipped" message
+   * that was simply untrue.
+   *
+   * ON CONFLICT against the unique index makes the dedupe atomic, and
+   * RETURNING makes the count real: whatever comes back is what was actually
+   * written, so `skipped` is derived from the outcome rather than predicted
+   * from a stale read. order_index is assigned in the same statement from the
+   * current MAX, so it cannot interleave either.
+   */
+  const inserted = await sql`
     INSERT INTO api_keys (config_id, key_value, order_index)
-    SELECT ${configId}, unnest(${newKeys}::text[]), unnest(${orderIndexes}::int[])
+    SELECT
+      ${configId},
+      k.value,
+      COALESCE((SELECT MAX(order_index) FROM api_keys WHERE config_id = ${configId}), 0)
+        + k.ordinality
+    FROM unnest(${deduped}::text[]) WITH ORDINALITY AS k(value, ordinality)
+    ON CONFLICT (config_id, key_value) DO NOTHING
+    RETURNING id
   `;
+
+  const skipped = keyValues.length - inserted.length;
+
+  if (inserted.length === 0) return { inserted: 0, skipped };
 
   await logAudit(
     configId,
     "keys_added",
-    `Added ${newKeys.length} key${newKeys.length === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} duplicate${skipped === 1 ? "" : "s"} skipped)` : ""}`
+    `Added ${inserted.length} key${inserted.length === 1 ? "" : "s"}${skipped > 0 ? ` (${skipped} duplicate${skipped === 1 ? "" : "s"} skipped)` : ""}`
   );
 
-  return { inserted: newKeys.length, skipped };
+  return { inserted: inserted.length, skipped };
 }
 
 /**
@@ -489,6 +587,22 @@ export async function claimExhaustionNotify(
     RETURNING id
   `;
   return rows.length > 0;
+}
+
+/**
+ * Hand the debounce window back when nothing was actually delivered.
+ *
+ * The claim is deliberately taken before the send, so a burst of concurrent
+ * requests produces exactly one message. The cost of that ordering is that a
+ * blocked or failed send still consumes the window — this undoes it, so the
+ * next request may try again instead of waiting out a debounce for a
+ * notification nobody received.
+ */
+export async function releaseExhaustionNotify(configId: string): Promise<void> {
+  const sql = getSQL();
+  await sql`
+    UPDATE proxy_configs SET webhook_notified_at = NULL WHERE id = ${configId}
+  `;
 }
 
 export async function incrementRequestCount(keyId: number): Promise<void> {

@@ -1,5 +1,5 @@
 import { collectPlaceholders, TEMPLATE_ROOTS } from "./template";
-import { parsePath } from "./paths";
+import { parsePath, BLOCKED_SEGMENTS } from "./paths";
 import {
   DEFAULT_SETTINGS,
   HTTP_METHODS,
@@ -103,6 +103,37 @@ function validateRule(rule: unknown, path: string, issues: Issue[]): void {
   }
 }
 
+/** Walks a rule tree and rejects any leaf reading this step's own response. */
+function rejectResponsePaths(rule: unknown, path: string, issues: Issue[]): void {
+  if (!rule || typeof rule !== "object") return;
+  const node = rule as Record<string, unknown>;
+
+  if (Array.isArray(node.all) || Array.isArray(node.any)) {
+    const key = Array.isArray(node.all) ? "all" : "any";
+    (node[key] as unknown[]).forEach((child, i) =>
+      rejectResponsePaths(child, `${path}.${key}[${i}]`, issues)
+    );
+    return;
+  }
+  if (node.not !== undefined) {
+    rejectResponsePaths(node.not, `${path}.not`, issues);
+    return;
+  }
+
+  const leaf = node as unknown as RuleLeaf;
+  if (typeof leaf.path !== "string") return;
+  const segments = parsePath(leaf.path);
+  const root = segments?.[0];
+  if (root?.kind === "key" && root.value === "response") {
+    issues.push(
+      error(
+        `${path}.path`,
+        `"${leaf.path}" can't be used here — a run condition is checked before the call, so this step has no response yet`
+      )
+    );
+  }
+}
+
 /**
  * Checks every `{{...}}` in a step.
  *
@@ -126,12 +157,27 @@ function validateStepTemplates(
     priorKeys.add(steps[i].key);
   }
 
-  const placeholders = collectPlaceholders({
+  /*
+   * Collected in two groups so `response.*` can be scoped.
+   *
+   * `response` is this step's own reply, which does not exist yet while the
+   * request is being built or the run condition evaluated — it is only
+   * meaningful in output_map.from and the success condition. Previously any
+   * placeholder root in TEMPLATE_ROOTS passed anywhere, so a
+   * `{{response.body.x}}` in a query parameter saved cleanly and then silently
+   * resolved to nothing at run time, which is the single hardest kind of
+   * definition bug to diagnose from the outside.
+   */
+  const preResponse = collectPlaceholders({
     request: step.request,
     run_condition: step.run_condition,
+  });
+  const postResponse = collectPlaceholders({
     success_condition: step.success_condition,
     output_map: step.output_map,
   });
+  const placeholders = [...preResponse, ...postResponse];
+  const responseAllowed = new Set(postResponse);
 
   const base = `steps[${index}]`;
 
@@ -148,6 +194,16 @@ function validateStepTemplates(
         error(
           base,
           `"{{${placeholder}}}" starts with something unknown — use input, steps, response or run`
+        )
+      );
+      continue;
+    }
+
+    if (root.value === "response" && !responseAllowed.has(placeholder)) {
+      issues.push(
+        error(
+          base,
+          `"{{${placeholder}}}" can only be used in an output field or a success condition — this step's response doesn't exist yet when the request is built`
         )
       );
       continue;
@@ -259,6 +315,14 @@ function validateStep(
   ] as const) {
     if (rule === null || rule === undefined) continue;
     validateRule(rule, `${base}.${field}`, issues);
+    // A run condition is evaluated before the call, and the executor builds
+    // its context with no `response` at all — so a leaf pointing at
+    // `response.*` there is not "false", it is unanswerable, and it saved
+    // cleanly then quietly skipped the step forever. Success conditions do
+    // have the response in scope.
+    if (field === "run_condition") {
+      rejectResponsePaths(rule, `${base}.${field}`, issues);
+    }
     if (countRuleNodes(rule) > LIMITS.maxRuleNodes) {
       issues.push(error(`${base}.${field}`, "This condition is too complex"));
     }
@@ -272,6 +336,17 @@ function validateStep(
     const at = `${base}.output_map[${i}]`;
     if (!mapping.field?.trim()) issues.push(error(at, "Output field needs a name"));
     if (!mapping.from?.trim()) issues.push(error(at, "Output field needs a source"));
+    // Rejected here, not silently dropped later.
+    //
+    // The mapper already refuses to write these (it `continue`s past them),
+    // so a definition naming one produced a field that never appeared, with
+    // no diagnostic anywhere. The spec says these names are invalid; say so
+    // at save time, where the author can act on it.
+    if (mapping.field && BLOCKED_SEGMENTS.has(mapping.field.trim())) {
+      issues.push(
+        error(`${at}.field`, `"${mapping.field.trim()}" can't be used as an output field name`)
+      );
+    }
     if (mapping.transform && !VALID_TRANSFORMS.has(mapping.transform)) {
       issues.push(error(`${at}.transform`, `"${mapping.transform}" isn't a valid transform`));
     }

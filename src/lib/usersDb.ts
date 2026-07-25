@@ -94,8 +94,30 @@ export async function updateUser(
   return rows[0] ? rowToUser(rows[0] as Record<string, unknown>) : null;
 }
 
+/**
+ * Deleting a user must also take away what they can still call.
+ *
+ * Removing the row ends their dashboard access immediately, because every
+ * page and session-authenticated route re-resolves the viewer from the
+ * database. It does nothing to the *public* surface: endpoints declare
+ * `owner_user_id ... ON DELETE SET NULL`, so an offboarded person's endpoints
+ * stayed enabled with their endpoint keys un-revoked, and /api/run
+ * authenticates on the hashed key alone with no owner lookup. They kept a
+ * working credential that spent the organisation's upstream keys.
+ *
+ * So: revoke their endpoint keys and disable their endpoints first, in that
+ * order, then delete. Disabling rather than deleting the endpoints keeps the
+ * run history and lets an admin hand the work over — the endpoints remain
+ * visible to admins, which is what ownerless means here.
+ */
 export async function deleteUser(id: string): Promise<void> {
   const sql = getSQL();
   await initSchema();
+  await sql`
+    UPDATE endpoint_keys SET revoked_at = NOW()
+    WHERE revoked_at IS NULL
+      AND endpoint_id IN (SELECT id FROM endpoints WHERE owner_user_id = ${id})
+  `;
+  await sql`UPDATE endpoints SET enabled = false WHERE owner_user_id = ${id}`;
   await sql`DELETE FROM users WHERE id = ${id}`;
 }

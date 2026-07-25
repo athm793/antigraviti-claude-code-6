@@ -105,7 +105,12 @@ export async function listEndpoints(
     LEFT JOIN endpoint_versions v ON v.id = e.active_version_id
     LEFT JOIN LATERAL (
       SELECT COUNT(*) AS runs,
-             COUNT(*) FILTER (WHERE status = 'success') AS hits
+             -- Same definition of "answered" the endpoint's own Runs tab uses
+             -- (success + partial). Counting only 'success' here meant the
+             -- list and the detail page reported different percentages for
+             -- the same endpoint and window, with nothing on either screen
+             -- explaining the gap. A partial run did return data.
+             COUNT(*) FILTER (WHERE status IN ('success', 'partial')) AS hits
       FROM endpoint_runs
       WHERE endpoint_id = e.id AND created_at > NOW() - INTERVAL '7 days'
     ) r ON true
@@ -253,26 +258,38 @@ export async function saveDefinition(
   const revision = bumped[0].revision as number;
   const versionId = uuidv4();
 
-  const versionRows = await sql`
-    INSERT INTO endpoint_versions (id, endpoint_id, version_no, definition, note)
-    SELECT
-      ${versionId},
-      ${endpointId},
-      COALESCE(MAX(version_no), 0) + 1,
-      ${JSON.stringify(definition)}::jsonb,
-      ${note ?? null}
-    FROM endpoint_versions WHERE endpoint_id = ${endpointId}
-    RETURNING *
-  `;
-
-  await sql`
-    UPDATE endpoints SET active_version_id = ${versionId}, updated_at = NOW()
-    WHERE id = ${endpointId}
-  `;
+  /*
+   * The version row and the pointer to it move together, or neither does.
+   *
+   * These were two separate statements after the revision bump had already
+   * committed. A failure between them left the endpoint reporting a bumped
+   * revision with no new version published — so the editor's cached revision
+   * was permanently stale (every later save 409'd until a reload) while live
+   * traffic quietly kept running the previous definition. Batching them means
+   * a failure rolls both back, leaving only the revision bump, which the
+   * caller's next attempt reconciles through the normal conflict path.
+   */
+  const [versionRows] = await sql.transaction([
+    sql`
+      INSERT INTO endpoint_versions (id, endpoint_id, version_no, definition, note)
+      SELECT
+        ${versionId},
+        ${endpointId},
+        COALESCE(MAX(version_no), 0) + 1,
+        ${JSON.stringify(definition)}::jsonb,
+        ${note ?? null}
+      FROM endpoint_versions WHERE endpoint_id = ${endpointId}
+      RETURNING *
+    `,
+    sql`
+      UPDATE endpoints SET active_version_id = ${versionId}, updated_at = NOW()
+      WHERE id = ${endpointId}
+    `,
+  ]);
 
   return {
     ok: true,
-    version: rowToVersion(versionRows[0] as Row),
+    version: rowToVersion((versionRows as Row[])[0] as Row),
     revision,
   };
 }

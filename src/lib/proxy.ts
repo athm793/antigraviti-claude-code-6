@@ -7,6 +7,15 @@ import {
 import { logEvent } from "./log";
 
 /**
+ * Whole-rotation budget for a pass-through request.
+ *
+ * The route declares maxDuration = 60. Stopping at 50s leaves room to return a
+ * real 503 and write the log line, the same 10s margin the waterfall runner
+ * keeps for the same reason: a platform hard-kill produces no record at all.
+ */
+const PROXY_ROTATION_BUDGET_MS = 50_000;
+
+/**
  * Pass-through proxy.
  *
  * A thin adapter over the shared rotation engine in rotation.ts. The response
@@ -31,6 +40,22 @@ export async function handleProxyRequest(
     method,
     headers: incomingHeaders,
     body,
+    // Re-check where this actually resolves, immediately before the fetch.
+    //
+    // Save-time validation is literal-only by construction — it cannot see
+    // what a hostname resolves to, so a domain whose DNS points at 10.0.0.1
+    // passes it. This used to be skipped here on the reasoning that the
+    // operator already set the target, but any account holder can create a
+    // provider and set its target, so "the operator" is not necessarily
+    // someone trusted with the deployment's internal network. Every other
+    // caller of this engine verifies; the proxy was the odd one out.
+    verifyTarget: true,
+    // Bound the whole rotation, not just each attempt. Without a deadline a
+    // large, fully rate-limited pool can burn the entire function budget at
+    // 30s per attempt and return a platform 504 — no structured error, no log
+    // line, and no exhaustion webhook, precisely when the operator needs all
+    // three.
+    deadlineAt: Date.now() + PROXY_ROTATION_BUDGET_MS,
   });
 
   // Path only — never the query string, which routinely carries lookup

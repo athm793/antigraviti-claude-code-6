@@ -1,6 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { focusRingCls } from "@/lib/ui";
 
 /**
  * Top-level navigation.
@@ -29,7 +30,7 @@ export function HeaderNav() {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`min-h-[44px] inline-flex items-center px-3 rounded-lg text-sm transition-colors ${
+            className={`min-h-[44px] inline-flex items-center px-3 rounded-lg text-sm transition-colors kp-press ${focusRingCls} ${
               active
                 ? "text-white bg-[#15151f]"
                 : "text-[#8b8b9e] hover:text-white hover:bg-[#0f0f18]"

@@ -148,8 +148,25 @@ export const ENDPOINT_DDL: string[] = [
    END $$`,
 
   // Circular reference, so the constraint is added after both tables exist.
-  // ADD CONSTRAINT is not idempotent — drop first.
-  `ALTER TABLE endpoints DROP CONSTRAINT IF EXISTS fk_endpoints_active_version`,
-  `ALTER TABLE endpoints ADD CONSTRAINT fk_endpoints_active_version
-     FOREIGN KEY (active_version_id) REFERENCES endpoint_versions(id) ON DELETE SET NULL`,
+  //
+  // Guarded rather than dropped-and-re-added. The unconditional version ran on
+  // every cold start, and ADD CONSTRAINT ... FOREIGN KEY re-validates every
+  // existing row while the preceding DROP holds ACCESS EXCLUSIVE on
+  // `endpoints` until the transaction commits. Checking pg_constraint first
+  // makes it what it was always meant to be: a one-time migration. Same guard
+  // pattern as the RENAME COLUMN above.
+  `DO $$ BEGIN
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint WHERE conname = 'fk_endpoints_active_version'
+     ) THEN
+       ALTER TABLE endpoints ADD CONSTRAINT fk_endpoints_active_version
+         FOREIGN KEY (active_version_id) REFERENCES endpoint_versions(id) ON DELETE SET NULL;
+     END IF;
+   END $$`,
+
+  // The runs list filters on status and counts the filtered set on every page
+  // load; neither was covered by an index, so both degraded linearly as
+  // endpoint_runs grew. This is the table that grows without bound.
+  `CREATE INDEX IF NOT EXISTS idx_endpoint_runs_endpoint_status
+     ON endpoint_runs(endpoint_id, status, created_at DESC)`,
 ];

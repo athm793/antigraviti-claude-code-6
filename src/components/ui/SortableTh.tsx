@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronUp } from "./Icon";
+import { focusRingCls } from "@/lib/ui";
 
 export type SortDir = "asc" | "desc";
 
@@ -38,7 +39,7 @@ export function SortableTh({
     >
       <a
         href={hrefFor(sortKey, nextDir)}
-        className={`inline-flex items-center gap-1 transition-colors ${
+        className={`inline-flex items-center gap-1 rounded transition-colors kp-press ${focusRingCls} ${
           active ? "text-[#c8c8d8]" : "hover:text-[#c8c8d8]"
         }`}
       >

@@ -4,101 +4,15 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Spinner, Upload } from "./ui/Icon";
 import { btnPrimary, btnSecondary, labelCls, textareaCls } from "@/lib/ui";
+import { extractKeysFromCsv } from "@/lib/csvKeys";
+
 
 /**
- * Minimal CSV parser — quoted fields, embedded commas, doubled quotes. No
- * dependency: the inputs here are exports from provider dashboards, not
- * arbitrary spreadsheets.
+ * Ceiling on an imported file. The whole file is read into React state and a
+ * textarea, and even a 20,000-key export sits far under this, so anything
+ * bigger is the wrong file rather than a big key pool.
  */
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = [];
-  let row: string[] = [];
-  let cell = "";
-  let inQuotes = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (text[i + 1] === '"') {
-          cell += '"';
-          i++;
-        } else {
-          inQuotes = false;
-        }
-      } else {
-        cell += ch;
-      }
-    } else if (ch === '"') {
-      inQuotes = true;
-    } else if (ch === ",") {
-      row.push(cell);
-      cell = "";
-    } else if (ch === "\n" || ch === "\r") {
-      if (ch === "\r" && text[i + 1] === "\n") i++;
-      row.push(cell);
-      cell = "";
-      if (row.some((c) => c.trim().length > 0)) rows.push(row);
-      row = [];
-    } else {
-      cell += ch;
-    }
-  }
-  row.push(cell);
-  if (row.some((c) => c.trim().length > 0)) rows.push(row);
-  return rows;
-}
-
-/**
- * Which column holds the keys?
- *
- * 1. A header cell matching key/secret/token names the column outright.
- * 2. Otherwise the column with the longest average value — API keys are
- *    long random strings, and every other export column (name, date, plan)
- *    is short.
- */
-function extractKeysFromCsv(text: string): string[] {
-  const rows = parseCsv(text);
-  if (rows.length === 0) return [];
-
-  const width = Math.max(...rows.map((r) => r.length));
-  if (width <= 1) {
-    // Plain list — treat like the textarea.
-    return rows.map((r) => (r[0] ?? "").trim()).filter(Boolean);
-  }
-
-  const headerPattern = /^(api[_ -]?key|key|secret|token|api[_ -]?token|value)$/i;
-  const header = rows[0].map((c) => c.trim());
-  const headerMatch = header.findIndex((c) => headerPattern.test(c));
-
-  let column: number;
-  let dataRows: string[][];
-  if (headerMatch !== -1) {
-    column = headerMatch;
-    dataRows = rows.slice(1);
-  } else {
-    const body = rows.slice(0, 200);
-    let best = 0;
-    let bestAvg = -1;
-    for (let c = 0; c < width; c++) {
-      const lengths = body.map((r) => (r[c] ?? "").trim().length).filter((l) => l > 0);
-      if (lengths.length === 0) continue;
-      const avg = lengths.reduce((a, b) => a + b, 0) / lengths.length;
-      if (avg > bestAvg) {
-        bestAvg = avg;
-        best = c;
-      }
-    }
-    column = best;
-    // No named header — but if the first row's cell looks like a label rather
-    // than a key (short, no digits), drop it.
-    const first = (rows[0][column] ?? "").trim();
-    const looksLikeLabel = first.length < 12 && !/\d/.test(first);
-    dataRows = looksLikeLabel ? rows.slice(1) : rows;
-  }
-
-  return dataRows.map((r) => (r[column] ?? "").trim()).filter(Boolean);
-}
+const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
 
 export function AddKeysForm({ configId }: { configId: string }) {
   const router = useRouter();
@@ -118,13 +32,22 @@ export function AddKeysForm({ configId }: { configId: string }) {
     .filter((l) => l.length > 0).length;
 
   function importFile(file: File) {
+    function fail(message: string) {
+      setImportNote("");
+      setError(message);
+    }
+
+    if (file.size > MAX_IMPORT_BYTES) {
+      fail(`${file.name} is too large (max ${MAX_IMPORT_BYTES / (1024 * 1024)} MB)`);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? "");
       const keys = extractKeysFromCsv(text);
       if (keys.length === 0) {
-        setImportNote("");
-        setError(`No keys found in ${file.name}`);
+        fail(`No keys found in ${file.name}`);
         return;
       }
       // Loaded into the textarea, not submitted — the count is visible and
@@ -137,6 +60,10 @@ export function AddKeysForm({ configId }: { configId: string }) {
       });
       setImportNote(`${keys.length} key${keys.length === 1 ? "" : "s"} from ${file.name}`);
     };
+    // Without these an unreadable file (permissions, removed device) is
+    // completely silent — nothing loads and nothing is said.
+    reader.onerror = () => fail(`Could not read ${file.name} — try picking it again`);
+    reader.onabort = () => fail(`Reading ${file.name} was interrupted`);
     reader.readAsText(file);
   }
 

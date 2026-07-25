@@ -1,11 +1,23 @@
 "use client";
 
+import { useRef } from "react";
 import { Select } from "../ui/Select";
 import { TokenInput } from "./TokenInput";
 import { Plus, X } from "../ui/Icon";
 import type { TokenSuggestion } from "@/lib/engine/tokens";
 import { TRANSFORMS, type OutputMapping, type Transform } from "@/lib/endpointTypes";
 import { btnSecondary, btnIcon, inputCls, tableHeadRowCls, tableThCls } from "@/lib/ui";
+
+/**
+ * Row identity, for React only.
+ *
+ * The output field name would be the obvious key, but it is blank on a new row
+ * and can be typed into a duplicate of an existing one, so one is minted here
+ * instead and never written back into the definition. Keying by index hands a
+ * removed row's open token popover and focus to the row below it.
+ */
+let rowSeq = 0;
+const nextRowId = () => `row${(rowSeq += 1)}`;
 
 /**
  * Maps this provider's response into the endpoint's shared output fields.
@@ -25,8 +37,21 @@ export function MappingTable({
   /** Fields other steps produce, so gaps in this step are visible. */
   siblingFields: string[];
 }) {
+  // Mappings also arrive from outside (a JSON apply, or switching step), so the
+  // id list is topped up against the incoming length, not only when adding.
+  const idsRef = useRef<string[]>([]);
+  if (idsRef.current.length !== mappings.length) {
+    idsRef.current = mappings.map((_, i) => idsRef.current[i] ?? nextRowId());
+  }
+  const ids = idsRef.current;
+
   function update(index: number, patch: Partial<OutputMapping>) {
     onChange(mappings.map((m, i) => (i === index ? { ...m, ...patch } : m)));
+  }
+
+  function remove(index: number) {
+    idsRef.current = idsRef.current.filter((_, i) => i !== index);
+    onChange(mappings.filter((_, i) => i !== index));
   }
 
   const mine = new Set(mappings.map((m) => m.field).filter(Boolean));
@@ -74,7 +99,7 @@ export function MappingTable({
           </thead>
           <tbody>
             {mappings.map((mapping, index) => (
-              <tr key={index}>
+              <tr key={ids[index]}>
                 <td className="py-1.5 pr-2 align-top">
                   <input
                     value={mapping.field}
@@ -105,7 +130,7 @@ export function MappingTable({
                 <td className="py-1.5 align-top">
                   <button
                     type="button"
-                    onClick={() => onChange(mappings.filter((_, i) => i !== index))}
+                    onClick={() => remove(index)}
                     aria-label={`Remove ${mapping.field || "field"}`}
                     data-tip="Remove field"
                     className={btnIcon}

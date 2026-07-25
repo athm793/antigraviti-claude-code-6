@@ -1,6 +1,7 @@
 import { type NextRequest } from "next/server";
 import { authorizeEndpoint, configAuthResponse } from "@/lib/auth";
-import { listVersions, restoreVersion } from "@/lib/endpointsDb";
+import { getVersion, listVersions, restoreVersion } from "@/lib/endpointsDb";
+import { checkStepProviders } from "@/lib/endpointGuards";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +55,35 @@ export async function POST(
     return Response.json({ error: "No version supplied" }, { status: 400 });
   }
 
-  const expected = Number(body.expected_revision ?? auth.endpoint.revision);
+  if (!Number.isInteger(body.expected_revision)) {
+    // Defaulting this to the row we just read would make the lock always pass,
+    // which is the same as having no lock at all for any client that omits it.
+    return Response.json(
+      { error: "expected_revision is required" },
+      { status: 400 }
+    );
+  }
+  const expected = Number(body.expected_revision);
+
+  /*
+   * Re-check provider ownership before re-activating an old definition.
+   *
+   * Owning the endpoint does not prove you may use the providers a past
+   * version points at: an admin may have authored a step against another
+   * tenant's provider, or the author may since have been demoted. Both sibling
+   * write paths (PUT /definition and POST /test) run this check; restore was
+   * the only definition-activating path that skipped it, so it could bring a
+   * foreign provider back into service.
+   */
+  const version = await getVersion(body.version_id);
+  if (!version || version.endpoint_id !== id) {
+    return Response.json({ error: "That version doesn't exist" }, { status: 404 });
+  }
+  const providers = await checkStepProviders(auth.user, version.definition);
+  if (!providers.ok) {
+    return Response.json({ error: providers.message }, { status: 400 });
+  }
+
   const result = await restoreVersion(id, body.version_id, expected);
 
   if (!result.ok) {

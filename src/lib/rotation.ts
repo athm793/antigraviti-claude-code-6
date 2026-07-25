@@ -189,11 +189,16 @@ export async function executeWithRotation(
 
     const key = await getActiveKey(config.id, exclude);
     if (!key) {
-      if (attempts > 0) {
-        // The pool just died under us. Fire-and-forget — the notification
-        // must never slow down or fail the request that discovered it.
-        void notifyPoolExhausted(config, { attempts, keysExhausted });
-      }
+      // Notify whether or not this request burned a key.
+      //
+      // Gating on attempts > 0 meant only the single request that happened to
+      // take the last key could alert. Every later request against the dead
+      // pool took the attempts === 0 branch and stayed silent, so a sustained
+      // outage produced at most one notification ever — and with the default
+      // cooldown_minutes of 0 the pool never recovers on its own, so it could
+      // never re-arm. The 15-minute debounce in notifyPoolExhausted is what
+      // stops this becoming a flood; it does not need a second gate here.
+      notifyPoolExhausted(config, { attempts, keysExhausted });
       return base({
         attempts,
         keysExhausted,
@@ -268,7 +273,7 @@ export async function executeWithRotation(
     };
   }
 
-  void notifyPoolExhausted(config, { attempts, keysExhausted });
+  notifyPoolExhausted(config, { attempts, keysExhausted });
   return base({
     attempts,
     keysExhausted,

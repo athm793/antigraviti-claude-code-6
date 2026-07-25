@@ -1,9 +1,20 @@
 "use client";
 
+import { useRef } from "react";
 import { TokenInput } from "./TokenInput";
 import { Plus, X } from "../ui/Icon";
 import type { TokenSuggestion } from "@/lib/engine/tokens";
 import { btnSecondary, btnIcon, inputCls } from "@/lib/ui";
+
+/**
+ * Row identity, for React only.
+ *
+ * Rows are positional in the saved definition and carry no id of their own, so
+ * one is minted here and never written back — keying by index hands a removed
+ * row's open token popover and focus to whichever row slides up into its place.
+ */
+let rowSeq = 0;
+const nextRowId = () => `row${(rowSeq += 1)}`;
 
 export function KeyValueEditor({
   rows,
@@ -22,8 +33,21 @@ export function KeyValueEditor({
   addLabel: string;
   emptyLabel: string;
 }) {
+  // Rows also arrive from outside (a JSON apply, or switching step), so the id
+  // list is topped up against the incoming length rather than only on add.
+  const idsRef = useRef<string[]>([]);
+  if (idsRef.current.length !== rows.length) {
+    idsRef.current = rows.map((_, i) => idsRef.current[i] ?? nextRowId());
+  }
+  const ids = idsRef.current;
+
   function update(index: number, patch: Partial<{ key: string; value: string }>) {
     onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+  }
+
+  function remove(index: number) {
+    idsRef.current = idsRef.current.filter((_, i) => i !== index);
+    onChange(rows.filter((_, i) => i !== index));
   }
 
   return (
@@ -32,7 +56,7 @@ export function KeyValueEditor({
 
       {rows.map((row, index) => (
         <div
-          key={index}
+          key={ids[index]}
           className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_44px] gap-2 items-start"
         >
           <input
@@ -52,7 +76,7 @@ export function KeyValueEditor({
           />
           <button
             type="button"
-            onClick={() => onChange(rows.filter((_, i) => i !== index))}
+            onClick={() => remove(index)}
             aria-label={`Remove ${row.key || "row"}`}
             data-tip="Remove"
             className={btnIcon}

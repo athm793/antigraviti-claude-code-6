@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { Select } from "../ui/Select";
 import { TokenInput } from "./TokenInput";
 import { Plus, X } from "../ui/Icon";
@@ -63,6 +64,17 @@ function isLeaf(rule: Rule): rule is RuleLeaf {
   return typeof (rule as RuleLeaf).path === "string";
 }
 
+/**
+ * Row identity, for React only.
+ *
+ * A leaf has nothing unique to key on — two conditions on the same path are
+ * legitimate — so one is minted here and never written back into the rule.
+ * Keying by index hands a removed row's open dropdown and focus to whichever
+ * condition slides up into its place.
+ */
+let rowSeq = 0;
+const nextRowId = () => `row${(rowSeq += 1)}`;
+
 export function ConditionEditor({
   rule,
   onChange,
@@ -74,6 +86,7 @@ export function ConditionEditor({
   tokens: TokenSuggestion[];
   emptyLabel: string;
 }) {
+  const idsRef = useRef<string[]>([]);
   const parsed = toLeaves(rule);
 
   if (!parsed) {
@@ -89,6 +102,13 @@ export function ConditionEditor({
 
   const { combinator, leaves } = parsed;
 
+  // Leaves also arrive from outside (a JSON apply, or switching step), so the
+  // id list is topped up against the incoming length, not only when adding.
+  if (idsRef.current.length !== leaves.length) {
+    idsRef.current = leaves.map((_, i) => idsRef.current[i] ?? nextRowId());
+  }
+  const ids = idsRef.current;
+
   function emit(nextCombinator: Combinator, nextLeaves: RuleLeaf[]) {
     if (nextLeaves.length === 0) {
       onChange(null);
@@ -102,6 +122,11 @@ export function ConditionEditor({
   function updateLeaf(index: number, patch: Partial<RuleLeaf>) {
     const next = leaves.map((leaf, i) => (i === index ? { ...leaf, ...patch } : leaf));
     emit(combinator, next);
+  }
+
+  function removeLeaf(index: number) {
+    idsRef.current = idsRef.current.filter((_, i) => i !== index);
+    emit(combinator, leaves.filter((_, i) => i !== index));
   }
 
   return (
@@ -130,7 +155,7 @@ export function ConditionEditor({
 
         return (
           <div
-            key={index}
+            key={ids[index]}
             className="grid grid-cols-1 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_minmax(0,10rem)_minmax(0,1fr)_44px] gap-2 items-start"
           >
             <Select
@@ -186,7 +211,7 @@ export function ConditionEditor({
 
             <button
               type="button"
-              onClick={() => emit(combinator, leaves.filter((_, i) => i !== index))}
+              onClick={() => removeLeaf(index)}
               aria-label="Remove this condition"
               data-tip="Remove condition"
               className={btnIcon}

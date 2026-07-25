@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { ProxyConfig } from "@/lib/types";
 import { Field } from "./ui/Field";
@@ -14,13 +14,8 @@ import {
   metaLabelCls,
 } from "@/lib/ui";
 
-export function EditConfigForm({ config }: { config: ProxyConfig }) {
-  const router = useRouter();
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const [form, setForm] = useState({
+function formFromConfig(config: ProxyConfig) {
+  return {
     name: config.name,
     target_base_url: config.target_base_url,
     auth_header_name: config.auth_header_name,
@@ -28,7 +23,25 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
     rate_limit_codes: config.rate_limit_codes.join(", "),
     cooldown_minutes: String(config.cooldown_minutes),
     webhook_url: config.webhook_url ?? "",
-  });
+  };
+}
+
+export function EditConfigForm({ config }: { config: ProxyConfig }) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const [form, setForm] = useState(() => formFromConfig(config));
+
+  /**
+   * Re-seed from the stored values whenever the editor is closed. Without this
+   * the draft survives a Cancel or a save + router.refresh(), so reopening
+   * "Edit settings" shows abandoned values that can be saved by mistake.
+   */
+  useEffect(() => {
+    if (!editing) setForm(formFromConfig(config));
+  }, [config, editing]);
 
   function set(field: string, value: string) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -216,7 +229,11 @@ export function EditConfigForm({ config }: { config: ProxyConfig }) {
             </button>
             <button
               type="button"
-              onClick={() => setEditing(false)}
+              onClick={() => {
+                setForm(formFromConfig(config));
+                setError("");
+                setEditing(false);
+              }}
               className="text-sm text-[#8b8b9e] hover:text-white transition-colors px-5 min-h-[44px]"
             >
               Cancel

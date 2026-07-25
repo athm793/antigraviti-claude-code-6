@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { authorizeEndpoint } from "@/lib/auth";
-import { listRuns, RUN_SORTS } from "@/lib/runLog";
+import { listRuns, isRunSort } from "@/lib/runLog";
 import { getEndpointAnalytics } from "@/lib/runAnalytics";
 import { RunsTable } from "@/components/RunsTable";
 import { ProviderPerformance } from "@/components/ProviderPerformance";
@@ -31,7 +31,9 @@ export default async function RunsTab({
   // and ORDER BY clauses, and an unrecognised value should mean the default,
   // not an error.
   const status = VALID_STATUSES.has(query.status ?? "") ? query.status! : "all";
-  const sort = query.sort && query.sort in RUN_SORTS ? query.sort : "when";
+  // isRunSort, not `in` — the `in` operator answers true for inherited keys
+  // like "constructor", which then resolved to a non-string sort expression.
+  const sort = isRunSort(query.sort) ? query.sort : "when";
   const dir = query.dir === "asc" ? ("asc" as const) : ("desc" as const);
 
   const [{ rows, total }, analytics] = await Promise.all([

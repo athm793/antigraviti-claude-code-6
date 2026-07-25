@@ -40,19 +40,24 @@ export const insetCls = "bg-[#0a0a10] border border-[#2a2a38] rounded-lg";
  * :active, neutralized under reduced motion), a focus-visible outline for
  * keyboard users, and a hover background swap on the icon variants — a
  * control that only changes text colour on hover reads as maybe-disabled.
+ *
+ * The ring is exported because it belongs on every keyboard-reachable control,
+ * not only the ones built from the button tokens below — tabs, nav links,
+ * switches and sortable headers compose it directly. Without it they fall back
+ * to the browser's own hairline outline, which is invisible on this page.
  */
-const btnFocus =
+export const focusRingCls =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#00C4B4]/60";
 
-export const btnPrimary = `bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
+export const btnPrimary = `bg-[#00C4B4] hover:bg-[#00a89a] disabled:opacity-50 disabled:cursor-not-allowed text-black font-semibold text-sm px-5 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${focusRingCls}`;
 
-export const btnSecondary = `text-sm bg-[#0a0a10] hover:bg-[#15151f] disabled:opacity-50 disabled:cursor-not-allowed text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
+export const btnSecondary = `text-sm bg-[#0a0a10] hover:bg-[#15151f] disabled:opacity-50 disabled:cursor-not-allowed text-[#c8c8d8] border border-[#2a2a38] hover:border-[#363650] px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${focusRingCls}`;
 
 export const btnDanger = `text-sm bg-red-500/15 hover:bg-red-500/25 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 border border-red-500/30 px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400/60`;
 
-export const btnGhostBrand = `bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${btnFocus}`;
+export const btnGhostBrand = `bg-[#00C4B4]/10 hover:bg-[#00C4B4]/20 text-[#00C4B4] border border-[#00C4B4]/25 text-sm font-medium px-4 min-h-[44px] rounded-lg transition-colors inline-flex items-center justify-center kp-press ${focusRingCls}`;
 
-export const btnIcon = `text-[#8b8b9e] hover:text-white hover:bg-[#15151f] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg shrink-0 kp-press ${btnFocus}`;
+export const btnIcon = `text-[#8b8b9e] hover:text-white hover:bg-[#15151f] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg shrink-0 kp-press ${focusRingCls}`;
 
 export const btnIconDanger = `text-[#8b8b9e] hover:text-red-400 hover:bg-red-500/10 transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg shrink-0 kp-press focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-400/60`;
 

@@ -71,6 +71,15 @@ export function TestRunPanel({
     });
   }, [fields]);
 
+  // An edit makes the last run describe a draft that no longer exists, and a
+  // stale status badge reads as "this still works" — which is worse than no
+  // badge, so the builder drops its copy too. Keyed on the definition object
+  // rather than on every render, so the run that just finished survives.
+  useEffect(() => {
+    setResult(null);
+    setError("");
+  }, [definition]);
+
   async function run() {
     setRunning(true);
     setError("");
@@ -102,6 +111,10 @@ export function TestRunPanel({
       onResult(data.result as RunResult);
     } catch {
       setError("Network error — check your connection and try again");
+      // Same reason: the previous run's trace under a new error reads as a
+      // result for the attempt that just failed.
+      setResult(null);
+      onResult(null);
     } finally {
       setRunning(false);
     }
