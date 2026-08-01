@@ -42,7 +42,7 @@
 <h2>Operational facts</h2>
 <table>
   <tr><th>Deploy</th><td><code>git push</code> then <code>npx vercel deploy --prod --yes</code> (Vercel project <code>antigraviti-claude-code-6</code>; domain <code>keyproxy.vercel.app</code>)</td></tr>
-  <tr><th>Tests</th><td><code>npm test</code> — 134 pure-engine checks, no network, no credits</td></tr>
+  <tr><th>Tests</th><td><code>npm test</code> — 151 pure-engine checks, no network, no credits</td></tr>
   <tr><th>Cron</th><td><code>vercel.json</code> schedules <code>/api/cron/prune</code> daily at 04:00; gated fail-closed on <code>CRON_SECRET</code> (set in prod)</td></tr>
   <tr><th>DB</th><td>Neon serverless Postgres over the HTTP driver — <strong>no interactive transactions</strong>, only batched <code>sql.transaction([...])</code></td></tr>
 </table>

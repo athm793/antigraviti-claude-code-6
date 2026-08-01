@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { getCurrentUser } from "@/lib/auth";
 import { UserMenu } from "@/components/UserMenu";
 import { HeaderNav } from "@/components/HeaderNav";
+import { Wordmark } from "@/components/Logo";
 import { TooltipLayer } from "@/components/ui/TooltipLayer";
 import "./globals.css";
 
@@ -34,11 +35,8 @@ export default async function RootLayout({
         {/* flex-wrap: on a phone the nav drops to its own row instead of
             pushing the user menu off the right edge of the screen. */}
         <header className="border-b border-[#1a1a28] px-4 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <a href="/" className="flex items-center gap-2.5 no-underline min-h-[44px]">
-            <div className="w-7 h-7 rounded-md bg-[#00C4B4] flex items-center justify-center text-black font-bold text-sm">
-              K
-            </div>
-            <span className="font-semibold text-white">KeyProxy</span>
+          <a href="/" className="flex items-center no-underline min-h-[44px]">
+            <Wordmark />
           </a>
           <span className="text-[#2a2a38] hidden xl:inline">|</span>
           <span className="text-[#8b8b9e] text-sm hidden xl:inline">API Key Rotation Proxy</span>

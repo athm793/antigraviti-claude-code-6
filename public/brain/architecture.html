@@ -43,7 +43,7 @@
 <p>Cost: no FK from steps to <code>proxy_configs</code>. Covered by save-time ownership checks (<code>endpointGuards.ts</code>), a <code>config_missing</code> step outcome at run time, and a delete guard (<code>endpointsUsingConfig</code>) that refuses to delete a referenced provider.</p>
 
 <h2>Layering</h2>
-<pre>src/lib/engine/*      pure functions, zero I/O   ← 134 tests run against this
+<pre>src/lib/engine/*      pure functions, zero I/O   ← 151 tests run against this
 src/lib/runner.ts     server adapter: providers, rotation, scrubbing
 src/lib/rotation.ts   the key-rotation loop (shared by proxy + waterfalls)
 src/app/api/run/…     the public endpoint: auth → rate limit → run → after() log+cache</pre>
