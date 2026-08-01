@@ -29,7 +29,16 @@ const PUBLIC_PREFIXES = [
   "/api/health",
 ];
 
+// Public paths matched in full rather than by prefix.
+// - /icon: the generated favicon. Gating it means a logged-out browser asks
+//   for the icon, is redirected to /login and gets HTML instead of a PNG, so
+//   the login page renders with no icon. Nothing in it is account-specific.
+//   It goes here, not in PUBLIC_PREFIXES, because a "/icon" prefix would also
+//   open anything else beginning with those five characters.
+const PUBLIC_EXACT = new Set(["/icon"]);
+
 function isPublicPath(pathname: string): boolean {
+  if (PUBLIC_EXACT.has(pathname)) return true;
   return PUBLIC_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
